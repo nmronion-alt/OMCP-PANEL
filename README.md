@@ -1,6 +1,6 @@
-# ONION HUB — Purple Edition
+# ONION HUB — Panel & Wings Toolkit
 
-Universal Pterodactyl + Wings deployment and network-routing installer.
+A modular toolkit for Pterodactyl Panel, Wings, Blueprint extensions and network diagnostics.
 
 ## Current release: 0.2.0-purple
 
@@ -8,15 +8,20 @@ The interactive Bash menu now includes:
 - Smart Check: OS, kernel, virtualization, CPU, RAM, disk, systemd, Docker and basic network diagnostics.
 - Panel & Wings service detection (read-only).
 - Routing diagnostics (read-only).
-- Purple terminal theme.
+- Purple terminal interface (visual styling only; not a Pterodactyl Panel theme).
+- Panel Themes section: checks for a Pterodactyl installation and Blueprint CLI; theme installation is not enabled in this preview.
 - VPS toolbox: uptime, memory, disk, listening TCP ports and Docker container listing.
 - Explicit status for modules that are not implemented yet.
 
 ## Important status
 
-This is an **interactive diagnostics/toolbox foundation**, not yet a production Pterodactyl installer. Panel/database deployment, Wings installation and secure registration, external relay provisioning, routing provider authentication, game-port forwarding, and real Green Heart verification are not implemented.
+This is an **interactive diagnostics/toolbox preview**, not yet a production Pterodactyl or Blueprint theme installer. Panel/database deployment, Wings installation and secure registration, Blueprint installation, third-party theme installation, external relay provisioning, routing provider authentication, game-port forwarding, and real Green Heart verification are not implemented.
 
-The script does not install packages, change firewall rules, overwrite services, store tunnel credentials, or delete user data. Menu items marked as planned are not functional installation modules yet.
+The script does not install packages, install Panel themes or Blueprint extensions, change firewall rules, overwrite services, store tunnel credentials, or delete user data. Menu items marked as planned are not functional installation modules yet.
+
+## Panel theme plan
+
+The Panel Themes menu is for themes that change the Pterodactyl web panel, not the terminal colors. The preview only detects a likely Panel directory and whether the Blueprint CLI is available. It does not install Blueprint or download/apply a theme. A future installer must check the Panel version and each theme's compatibility, show the selected theme and source, create a backup, and ask for confirmation before changing Panel files.
 
 ## Intended networking architecture
 
