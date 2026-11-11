@@ -1,59 +1,44 @@
-# ONION HUB — Panel & Wings Toolkit
+# ONION HUB
 
-A modular toolkit for Pterodactyl Panel, Wings, Blueprint extensions and network diagnostics.
+One-command Pterodactyl deployment project.
 
-## Current release: 0.3.0-panel-themes-preview
+## Target workflow
 
-The interactive Bash menu now includes:
-- Smart Check: OS, kernel, virtualization, CPU, RAM, disk, systemd, Docker and basic network diagnostics.
-- Panel & Wings service detection (read-only).
-- Routing diagnostics (read-only).
-- Purple terminal interface (visual styling only; not a Pterodactyl Panel theme).
-- Panel Themes section: checks for a Pterodactyl installation and Blueprint CLI; theme installation is not enabled in this preview.
-- VPS toolbox: uptime, memory, disk, listening TCP ports and Docker container listing.
-- Explicit status for modules that are not implemented yet.
+1. Detect the host before making changes.
+2. Install a Pterodactyl Panel and its database on a supported, persistent Linux host.
+3. Install Wings and create/register its node through the Panel API.
+4. Configure allocations and verify Panel-to-Wings connectivity.
+5. Offer optional Panel extensions and themes only when their framework and Panel versions are compatible.
+6. Select networking based on verified inbound reachability, not merely an outbound public-IP lookup.
 
-## Important status
+## Supported-host policy
 
-This is an **interactive diagnostics/toolbox preview**, not yet a production Pterodactyl or Blueprint theme installer. Panel/database deployment, Wings installation and secure registration, Blueprint installation, third-party theme installation, external relay provisioning, routing provider authentication, game-port forwarding, and real Green Heart verification are not implemented.
+The first real installer target is a persistent Ubuntu/Debian VPS with root access, systemd, Docker support, sufficient resources, and control of the required DNS/network settings. KVM is the preferred virtualization type. Environments such as hosted code sandboxes are not assumed to support privileged Docker, systemd, persistent storage, or inbound game ports. The installer must stop with a clear reason when a required capability is missing.
 
-The script does not install packages, install Panel themes or Blueprint extensions, change firewall rules, overwrite services, store tunnel credentials, or delete user data. Menu items marked as planned are not functional installation modules yet.
+## Networking design
 
-## Panel theme plan
+- **Direct mode:** use the node's reachable public address or DNS name only after independent inbound checks. Configure the Panel, Wings API, SFTP, and game allocations separately.
+- **Private/inbound-restricted mode:** publish the Panel web app through an HTTP-capable tunnel if appropriate. Wings API, SFTP, and game allocations still need a compatible TCP path that works for the Panel and end users.
+- **Minekube Connect:** optional Minecraft traffic connector only. It does not replace Wings API or SFTP routing.
+- **Cloudflare Tunnel:** can publish the Panel's HTTP(S) service. Its non-HTTP TCP routes require a client-side `cloudflared` connection; it is not a transparent public TCP relay for arbitrary Minecraft clients.
 
-The Panel Themes menu is for the web dashboard, not terminal colors. Pterodactyl 2.0 has a native theme system; Pterodactyl 1.x commonly uses community tools such as Blueprint for extensions and themes. These are different paths and must not be mixed. This preview only detects a likely Panel directory and whether the Blueprint CLI is available. It does not install Blueprint or download/apply a theme. A future installer must detect the Panel version, check the selected theme's compatibility and source, create a backup, and ask for confirmation before changing Panel files.
+No relay provider is provisioned by GitHub or Cloudflare Pages. A private host cannot become publicly reachable for all protocols without a real relay/network provider and its required account/configuration.
 
-## Intended networking architecture
+## Panel extensions and themes
 
-- Direct mode is allowed only after inbound reachability is independently verified.
-- Cloudflare Pages distributes the installer; it is not a TCP relay.
-- Cloudflare Tunnel can publish supported HTTP/HTTPS Panel traffic.
-- Wings API, SFTP and game allocations need compatible TCP routing and externally reachable ports.
-- Minekube Connect is for Minecraft traffic, not Panel or Wings.
-- A host without public inbound connectivity still requires an external relay/network provider.
+Pterodactyl 2.x has a native extension/theme system. Blueprint is a separate community framework associated with the Pterodactyl 1.x ecosystem. These paths must not be mixed. The installer must detect the exact Panel version and refuse incompatible extension/theme packages. It must back up the Panel before applying any third-party modification.
 
-## Run safely
+## Automatic node registration
 
-Review before running. Do not pipe an unreviewed remote script directly into a root shell:
+Node creation requires privileged Panel API access and a valid location, FQDN/scheme, resource limits, daemon ports, and allocations. The installer must create or obtain a least-privilege credential securely, register the node, obtain its Wings configuration, start Wings, then verify the actual heartbeat. A successful service start alone is not a Green Heart.
 
-```bash
-curl -fsSLo onion-hub.sh https://hub.mronion.fun/install.sh
-less onion-hub.sh
-bash onion-hub.sh
-```
+## Current repository state
 
-Smart Check and toolbox options do not require root in normal configurations.
+The current shell script is still a diagnostics/toolbox preview. It does **not** yet deploy Panel, database, Wings, create nodes, provision relays, or install Blueprint/extensions/themes. Do not advertise it as a finished one-command installer until those stages are implemented and tested on clean supported VPS images.
 
-## Cloudflare Pages
+## Security requirements
 
-Connect this repository to Cloudflare Pages:
-- Framework preset: **None**
-- Build command: `exit 0`
-- Build output directory: `.`
-
-After custom domain activation, the script URL is intended to be:
-`https://hub.mronion.fun/install.sh`
-
-## Safety
-
-Keep provider credentials out of Git, shell history, logs and screenshots. Use provider-issued credentials with least privilege. Verify every remote payload before execution.
+- Never overwrite an existing Panel, database, Docker setup, or firewall policy without an explicit backup and confirmation.
+- Do not put API keys, passwords, tunnel tokens, or database credentials in Git, URLs, shell history, or logs.
+- Download release assets from official project sources and verify checksums/signatures where published.
+- Never use a blind remote `curl | bash` root execution path for unreviewed payloads.
