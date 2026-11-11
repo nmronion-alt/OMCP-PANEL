@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# ONION HUB — Purple Edition
-# Safe interactive bootstrap. This release contains diagnostics/tools only.
+# ONION HUB — Panel & Wings Toolkit
+# Safe interactive preview. Panel themes are detection-only; no theme is installed.
 set -Eeuo pipefail
 
-VERSION="0.2.0-purple"
+VERSION="0.3.0-panel-themes-preview"
 BRAND="ONION HUB"
-THEME="purple"
 RESET=$'\033[0m'
 PURPLE=$'\033[1;38;5;141m'
 LAVENDER=$'\033[1;38;5;183m'
@@ -53,7 +52,7 @@ header(){
  ╚═════╝ ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
 ART
   printf '%b' "$RESET"
-  printf ' %bPURPLE EDITION%b  %b|%b  v%s  %b|%b  %s\n' "$LAVENDER" "$RESET" "$GRAY" "$RESET" "$VERSION" "$GRAY" "$RESET" "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '')"
+  printf ' %bPANEL & WINGS TOOLKIT%b  %b|%b  v%s  %b|%b  %s\n' "$LAVENDER" "$RESET" "$GRAY" "$RESET" "$VERSION" "$GRAY" "$RESET" "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '')"
   rule
 }
 system_status(){
@@ -109,11 +108,33 @@ show_tools(){
   esac
   pause
 }
-themes(){
-  header; printf ' %bTHEME SELECTOR%b\n' "$LAVENDER" "$RESET"
-  echo ' Purple Edition is the default theme in this release.'
-  echo ' Additional themes will be added in a later release.'
-  pause
+panel_themes(){
+  header; printf ' %bPANEL THEMES & BLUEPRINT%b\n' "$LAVENDER" "$RESET"; rule
+  local panel_dir=""
+  for candidate in "${PTERODACTYL_DIRECTORY:-}" /var/www/pterodactyl /var/www/panel; do
+    if [[ -n "$candidate" && -f "$candidate/artisan" ]]; then panel_dir="$candidate"; break; fi
+  done
+
+  if [[ -n "$panel_dir" ]]; then
+    ok "Pterodactyl Panel detected: $panel_dir"
+  else
+    warn 'Pterodactyl Panel directory not detected in the common locations.'
+  fi
+
+  if have blueprint; then
+    ok "Blueprint CLI detected: $(command -v blueprint)"
+  else
+    warn 'Blueprint CLI not detected.'
+  fi
+
+  echo
+  echo ' This menu is for the WEBSITE PANEL appearance, not terminal colors.'
+  echo ' Theme installation is not enabled in this preview release.'
+  echo ' No theme files were downloaded, changed, or removed.'
+  echo
+  echo ' Next: verify Panel version + Blueprint compatibility, show available'
+  echo ' themes, back up the Panel, then install only after confirmation.'
+  rule; pause
 }
 service_status(){
   header; printf ' %bPANEL & WINGS STATUS%b\n' "$LAVENDER" "$RESET"; rule
@@ -158,7 +179,7 @@ main_menu(){
     system_status
     rule
     printf ' %bDEPLOYMENT & SERVICES%b\n' "$CYAN" "$RESET"
-    printf '  [1] Smart Check          [5] Themes\n'
+    printf '  [1] Smart Check          [5] Panel Themes\n'
     printf '  [2] Install ONION HUB    [6] System Tools\n'
     printf '  [3] Panel & Wings Status [7] Container Tools\n'
     printf '  [4] Routing Diagnostics [8] New Modules (coming soon)\n'
@@ -171,7 +192,7 @@ main_menu(){
       2) install_notice ;;
       3) service_status ;;
       4) routing_status ;;
-      5) themes ;;
+      5) panel_themes ;;
       6|7|9) show_tools ;;
       8) header; warn 'Additional modules are planned; none are falsely marked as installed.'; pause ;;
       0) printf '%bONION HUB closed.%b\n' "$PURPLE" "$RESET"; exit 0 ;;
