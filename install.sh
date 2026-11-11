@@ -1,58 +1,183 @@
 #!/usr/bin/env bash
-# ONION HUB foundation bootstrap — diagnostics only; no destructive actions.
+# ONION HUB — Purple Edition
+# Safe interactive bootstrap. This release contains diagnostics/tools only.
 set -Eeuo pipefail
-VERSION="0.1.0-foundation"
+
+VERSION="0.2.0-purple"
 BRAND="ONION HUB"
-line(){ printf '%s\n' '============================================================'; }
+THEME="purple"
+RESET=$'\033[0m'
+PURPLE=$'\033[1;38;5;141m'
+LAVENDER=$'\033[1;38;5;183m'
+CYAN=$'\033[1;38;5;117m'
+GREEN=$'\033[1;38;5;82m'
+YELLOW=$'\033[1;38;5;220m'
+RED=$'\033[1;38;5;203m'
+GRAY=$'\033[0;38;5;244m'
+WHITE=$'\033[1;38;5;255m'
+
 have(){ command -v "$1" >/dev/null 2>&1; }
-detect_cloud_shell(){
-  [[ -n "${CLOUD_SHELL:-}" || -n "${GOOGLE_CLOUD_PROJECT:-}" ||
-     -n "${DEVSHELL_PROJECT_ID:-}" || -d /google/devshell ]]
+pause(){ printf '\n%b' "${GRAY}Press Enter to return to menu...${RESET}"; read -r _ || true; }
+rule(){ printf '%b\n' "${PURPLE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"; }
+ok(){ printf ' %b %s\n' "${GREEN}✓${RESET}" "$*"; }
+warn(){ printf ' %b %s\n' "${YELLOW}! ${RESET}" "$*"; }
+fail(){ printf ' %b %s\n' "${RED}✗${RESET}" "$*"; }
+
+get_os(){
+  if [[ -r /etc/os-release ]]; then . /etc/os-release; printf '%s' "${PRETTY_NAME:-Unknown Linux}"; else printf 'Unknown'; fi
+}
+get_ram(){
+  if [[ -r /proc/meminfo ]]; then awk '/MemTotal:/ {printf "%.1f GiB",$2/1048576}' /proc/meminfo; else printf 'Unknown'; fi
+}
+get_cpu(){
+  if have nproc; then nproc; else printf 'Unknown'; fi
+}
+get_disk(){
+  df -hP / 2>/dev/null | awk 'NR==2 {printf "%s used / %s total (%s)",$3,$2,$5}'
+}
+get_public_ip(){
+  if have curl; then curl -4fsS --connect-timeout 3 --max-time 6 https://api.ipify.org 2>/dev/null || true; fi
+}
+is_cloud_shell(){
+  [[ -n "${CLOUD_SHELL:-}" || -n "${GOOGLE_CLOUD_PROJECT:-}" || -n "${DEVSHELL_PROJECT_ID:-}" || -d /google/devshell ]]
+}
+header(){
+  clear 2>/dev/null || true
+  printf '%b' "$PURPLE"
+  cat <<'ART'
+ ██████╗ ███╗   ██╗██╗ ██████╗ ███╗   ██╗
+██╔═══██╗████╗  ██║██║██╔═══██╗████╗  ██║
+██║   ██║██╔██╗ ██║██║██║   ██║██╔██╗ ██║
+██║   ██║██║╚██╗██║██║██║   ██║██║╚██╗██║
+╚██████╔╝██║ ╚████║██║╚██████╔╝██║ ╚████║
+ ╚═════╝ ╚═╝  ╚═══╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+ART
+  printf '%b' "$RESET"
+  printf ' %bPURPLE EDITION%b  %b|%b  v%s  %b|%b  %s\n' "$LAVENDER" "$RESET" "$GRAY" "$RESET" "$VERSION" "$GRAY" "$RESET" "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '')"
+  rule
+}
+system_status(){
+  local load ram disk ip
+  load="$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo '?')"
+  ram="$(get_ram)"; disk="$(get_disk)"; ip="$(get_public_ip)"
+  printf ' %b◉ SYSTEM STATUS%b\n' "$CYAN" "$RESET"
+  printf '   Host: %s  |  OS: %s\n' "$(hostname 2>/dev/null || echo unknown)" "$(get_os)"
+  printf '   CPU threads: %s  |  RAM: %s  |  Load: %s\n' "$(get_cpu)" "$ram" "$load"
+  printf '   Disk: %s\n' "${disk:-Unknown}"
+  if [[ -n "$ip" ]]; then printf '   Outbound IPv4: %s\n' "$ip"; else warn 'Outbound IPv4 lookup unavailable'; fi
+  if is_cloud_shell; then warn 'Cloud Shell detected: temporary session; not a persistent VPS.'; fi
 }
 smart_check(){
-  line; printf '             %s — SMART CHECK\n' "$BRAND"; line
-  if [[ -r /etc/os-release ]]; then . /etc/os-release; printf 'OS: %s (%s %s)\n' "${PRETTY_NAME:-Unknown}" "${ID:-?}" "${VERSION_ID:-?}"; else echo 'OS: Unknown'; fi
-  printf 'Kernel: %s\nArchitecture: %s\n' "$(uname -r)" "$(uname -m)"
-  printf 'Virtualization: %s\nUser: %s (UID %s)\n' "$(systemd-detect-virt 2>/dev/null || echo unknown)" "$(id -un)" "$EUID"
-  line; echo 'RESOURCES'
-  have nproc && printf 'CPU threads: %s\n' "$(nproc)"
-  [[ -r /proc/meminfo ]] && awk '/MemTotal:/ {printf "RAM: %.2f GiB\n",$2/1048576}' /proc/meminfo
-  have df && df -hP / | awk 'NR<=2'
-  line; echo 'ENVIRONMENT'
-  if detect_cloud_shell; then echo '[WARN] Google Cloud Shell detected; temporary environment, not persistent VPS hosting.'; else echo '[INFO] Cloud Shell marker not detected (suitability is not proven).'; fi
-  if have systemctl && systemctl is-system-running >/dev/null 2>&1; then echo '[PASS] systemd running'; elif have systemctl; then echo '[WARN] systemd present but not fully running'; else echo '[FAIL] systemctl unavailable'; fi
-  if have docker && docker info >/dev/null 2>&1; then echo '[PASS] Docker daemon responds'; elif have docker; then echo '[WARN] Docker CLI exists but daemon unavailable/permission denied'; else echo '[INFO] Docker not installed (not installed by this check)'; fi
-  line; echo 'NETWORK'
-  if have ip; then ip -brief address 2>/dev/null || true; ip route show default 2>/dev/null || true; else echo '[WARN] ip command unavailable'; fi
-  if have curl; then printf 'Outbound IPv4: '; curl -4fsS --connect-timeout 4 --max-time 8 https://api.ipify.org 2>/dev/null || printf 'unavailable'; printf '\n'; else echo '[WARN] curl unavailable'; fi
-  echo '[NOTE] Outbound public IP does not prove inbound reachability.'
-  echo '[NOTE] Inbound ports require an independent external test.'
-  line; echo 'COMPATIBILITY'
-  local ok=0
-  if [[ -r /etc/os-release ]]; then . /etc/os-release; case "${ID:-}:${VERSION_ID:-}" in ubuntu:24.04|debian:12|debian:13) ok=1;; esac; fi
-  ((ok)) && echo '[PASS] OS is in diagnostic target list.' || echo '[WARN] OS is outside diagnostic target list.'
-  echo '[INFO] Foundation release only: no packages, firewall rules, services, or user data changed.'
-  line
+  header; printf ' %bSMART CHECK%b\n' "$LAVENDER" "$RESET"; rule
+  printf ' OS: %s\n Kernel: %s\n Architecture: %s\n' "$(get_os)" "$(uname -r)" "$(uname -m)"
+  printf ' Virtualization: %s\n' "$(systemd-detect-virt 2>/dev/null || echo unknown)"
+  printf ' CPU threads: %s\n RAM: %s\n Disk: %s\n' "$(get_cpu)" "$(get_ram)" "$(get_disk)"
+  if is_cloud_shell; then warn 'Cloud Shell environment detected; persistence and inbound networking are limited.'; else ok 'No common Cloud Shell marker detected (this is not proof of public reachability).'; fi
+  if have systemctl; then
+    if systemctl is-system-running >/dev/null 2>&1; then ok 'systemd is running'; else warn 'systemctl exists but systemd is not fully running'; fi
+  else fail 'systemctl unavailable'; fi
+  if have docker; then
+    if docker info >/dev/null 2>&1; then ok 'Docker daemon responds'; else warn 'Docker CLI found; daemon unavailable or permission denied'; fi
+  else warn 'Docker is not installed'; fi
+  if have ip; then
+    printf '\n%bNETWORK INTERFACES%b\n' "$CYAN" "$RESET"
+    ip -brief address 2>/dev/null || true
+    printf '\n%bDEFAULT ROUTE%b\n' "$CYAN" "$RESET"
+    ip route show default 2>/dev/null || true
+  fi
+  printf '\n%bIMPORTANT%b Public outbound IP does not prove inbound port access. Test from an independent network.\n' "$YELLOW" "$RESET"
+  rule; pause
 }
-install_hub(){
-  line; echo 'ONION HUB — INSTALL'
-  echo '[STOP] Production installation is not enabled in this foundation release.'
-  echo 'Panel, database, Wings, relay provisioning, node registration and Green Heart verification are not implemented yet.'
-  echo 'No system changes were made.'
-  line
-}
-while true; do
-  clear 2>/dev/null || true
-  line; printf '                 %s\n                 Version %s\n' "$BRAND" "$VERSION"; line
-  echo '  [1] SMART CHECK'
-  echo '  [2] INSTALL ONION HUB (not enabled yet)'
-  echo '  [3] EXIT'
-  line
-  read -r -p 'Select option: ' choice || exit 0
-  case "$choice" in
-    1) smart_check; read -r -p 'Press Enter to continue...' _ ;;
-    2) install_hub; read -r -p 'Press Enter to continue...' _ ;;
-    3) exit 0 ;;
-    *) echo 'Invalid option.'; sleep 1 ;;
+show_tools(){
+  header; printf ' %bVPS TOOLBOX%b\n' "$LAVENDER" "$RESET"; rule
+  echo ' [1] Show system uptime'
+  echo ' [2] Show memory details'
+  echo ' [3] Show disk usage'
+  echo ' [4] Show listening TCP ports'
+  echo ' [5] Show Docker containers'
+  echo ' [0] Back'
+  rule
+  read -r -p 'Select tool: ' t || return
+  case "$t" in
+    1) uptime 2>/dev/null || warn 'uptime command unavailable' ;;
+    2) free -h 2>/dev/null || cat /proc/meminfo | head -n 8 ;;
+    3) df -hT 2>/dev/null ;;
+    4) if have ss; then ss -lnt 2>/dev/null; else warn 'ss command unavailable'; fi ;;
+    5) if have docker && docker info >/dev/null 2>&1; then docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'; else warn 'Docker daemon unavailable'; fi ;;
+    0) return ;;
+    *) warn 'Invalid option' ;;
   esac
-done
+  pause
+}
+themes(){
+  header; printf ' %bTHEME SELECTOR%b\n' "$LAVENDER" "$RESET"
+  echo ' Purple Edition is the default theme in this release.'
+  echo ' Additional themes will be added in a later release.'
+  pause
+}
+service_status(){
+  header; printf ' %bPANEL & WINGS STATUS%b\n' "$LAVENDER" "$RESET"; rule
+  if have systemctl; then
+    for svc in nginx mariadb mysql redis-server wings; do
+      if systemctl list-unit-files "${svc}.service" --no-legend 2>/dev/null | grep -q "${svc}.service"; then
+        printf ' %-16s %s\n' "$svc" "$(systemctl is-active "$svc" 2>/dev/null || true)"
+      else
+        printf ' %-16s %bnot detected%b\n' "$svc" "$GRAY" "$RESET"
+      fi
+    done
+  else warn 'systemd unavailable; service status cannot be queried'; fi
+  echo
+  warn 'This is detection only. It does not install, configure, or repair Panel/Wings.'
+  pause
+}
+routing_status(){
+  header; printf ' %bROUTING DIAGNOSTICS%b\n' "$LAVENDER" "$RESET"; rule
+  local ip
+  ip="$(get_public_ip)"
+  printf ' Outbound public IPv4: %s\n' "${ip:-unavailable}"
+  if have cloudflared; then ok 'cloudflared binary detected'; else warn 'cloudflared not detected'; fi
+  warn 'Cloudflare Pages is only hosting for this installer, not a TCP relay.'
+  warn 'Cloudflare Tunnel can publish supported HTTP services; Wings/SFTP/game TCP need compatible routing.'
+  warn 'Minekube Connect is a Minecraft route only; it does not route Panel or Wings.'
+  echo
+  echo ' No tunnel credentials are requested or stored by this diagnostic module.'
+  pause
+}
+install_notice(){
+  header; printf ' %bINSTALLATION%b\n' "$LAVENDER" "$RESET"; rule
+  warn 'Production deployment is not enabled in this build.'
+  echo ' Planned modules: Pterodactyl Panel, database, Wings, external relay integration,'
+  echo ' secure node registration, allocation checks, and real heartbeat verification.'
+  echo
+  echo 'No packages installed. No firewall changes. No existing data modified.'
+  pause
+}
+main_menu(){
+  while true; do
+    header
+    system_status
+    rule
+    printf ' %bDEPLOYMENT & SERVICES%b\n' "$CYAN" "$RESET"
+    printf '  [1] Smart Check          [5] Themes\n'
+    printf '  [2] Install ONION HUB    [6] System Tools\n'
+    printf '  [3] Panel & Wings Status [7] Container Tools\n'
+    printf '  [4] Routing Diagnostics [8] New Modules (coming soon)\n'
+    printf '\n %bMAINTENANCE & TOOLS%b\n' "$CYAN" "$RESET"
+    printf '  [9] VPS Toolbox          [0] Exit\n'
+    rule
+    read -r -p ' ➜ Enter Option (0-9): ' choice || exit 0
+    case "$choice" in
+      1) smart_check ;;
+      2) install_notice ;;
+      3) service_status ;;
+      4) routing_status ;;
+      5) themes ;;
+      6|7|9) show_tools ;;
+      8) header; warn 'Additional modules are planned; none are falsely marked as installed.'; pause ;;
+      0) printf '%bONION HUB closed.%b\n' "$PURPLE" "$RESET"; exit 0 ;;
+      *) warn 'Invalid option'; sleep 1 ;;
+    esac
+  done
+}
+
+main_menu
