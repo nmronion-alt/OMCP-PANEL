@@ -2,7 +2,7 @@
 
 A modular toolkit for Pterodactyl Panel, Wings, Blueprint extensions and network diagnostics.
 
-## Current release: 0.2.0-purple
+## Current release: 0.3.0-panel-themes-preview
 
 The interactive Bash menu now includes:
 - Smart Check: OS, kernel, virtualization, CPU, RAM, disk, systemd, Docker and basic network diagnostics.
@@ -21,7 +21,7 @@ The script does not install packages, install Panel themes or Blueprint extensio
 
 ## Panel theme plan
 
-The Panel Themes menu is for themes that change the Pterodactyl web panel, not the terminal colors. The preview only detects a likely Panel directory and whether the Blueprint CLI is available. It does not install Blueprint or download/apply a theme. A future installer must check the Panel version and each theme's compatibility, show the selected theme and source, create a backup, and ask for confirmation before changing Panel files.
+The Panel Themes menu is for the web dashboard, not terminal colors. Pterodactyl 2.0 has a native theme system; Pterodactyl 1.x commonly uses community tools such as Blueprint for extensions and themes. These are different paths and must not be mixed. This preview only detects a likely Panel directory and whether the Blueprint CLI is available. It does not install Blueprint or download/apply a theme. A future installer must detect the Panel version, check the selected theme's compatibility and source, create a backup, and ask for confirmation before changing Panel files.
 
 ## Intended networking architecture
 
