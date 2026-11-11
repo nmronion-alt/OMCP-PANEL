@@ -167,8 +167,10 @@ routing_status(){
 install_notice(){
   header; printf ' %bINSTALLATION%b\n' "$LAVENDER" "$RESET"; rule
   warn 'Production deployment is not enabled in this build.'
-  echo ' Planned modules: Pterodactyl Panel, database, Wings, external relay integration,'
-  echo ' secure node registration, allocation checks, and real heartbeat verification.'
+  echo ' Target: Panel + database + Wings + automatic node registration + heartbeat checks.'
+  echo ' Direct mode requires verified inbound access; private mode needs a real TCP relay.'
+  echo ' Minekube is for Minecraft traffic only; it does not route Wings API or SFTP.'
+  echo ' This build does not yet deploy these components.'
   echo
   echo 'No packages installed. No firewall changes. No existing data modified.'
   pause
