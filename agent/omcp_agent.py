@@ -333,13 +333,13 @@ def start_tunnel(sid, provider):
     deadline=time.time()+25
     while time.time()<deadline:
         if entry.get("address"):
-            return {"status":"running","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
+            return {"status":"running","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
         if proc.poll() is not None:
             time.sleep(0.2)
-            detail="\\n".join(entry["lines"][-30:]) or "SSH exited without returning a tunnel address."
+            detail="\n".join(entry["lines"][-30:]) or "SSH exited without returning a tunnel address."
             raise ValueError("Pinggy tunnel process exited (code "+str(proc.returncode)+"). "+detail[-1800:])
         time.sleep(0.2)
-    return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
+    return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
 
 def tunnel_info(sid):
     with TUNNEL_LOCK:
@@ -347,7 +347,7 @@ def tunnel_info(sid):
         if not entry: return {"status":"stopped","provider":None,"address":None,"logs":""}
         p=entry["proc"]; alive=p.poll() is None
         status=("running" if entry["address"] else "starting") if alive else "stopped"
-        return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-30:])}
+        return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"\n".join(entry["lines"][-30:])}
 
 def stop_tunnel(sid):
     with TUNNEL_LOCK:
