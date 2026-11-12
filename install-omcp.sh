@@ -48,5 +48,5 @@ echo
 echo "OMCP installed. Local panel: http://127.0.0.1:8765"
 echo "First-run Admin Key (save it): sudo journalctl -u omcp -n 80 --no-pager"
 echo "API is localhost-only. Put Cloudflare Access in front of a Tunnel to localhost:8765."
-echo "Java is not installed by this script; install a compatible runtime before creating servers."
+echo "OpenJDK 21 was installed. Check java -version if server startup fails."
 echo "No Minecraft TCP relay is configured by this installer."
