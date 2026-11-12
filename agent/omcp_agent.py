@@ -345,8 +345,9 @@ def tunnel_info(sid):
     with TUNNEL_LOCK:
         entry=TUNNELS.get(sid)
         if not entry: return {"status":"stopped","provider":None,"address":None,"logs":""}
-        p=entry["proc"]
-        return {"status":"running" if p.poll() is None else "stopped","provider":entry["provider"],"address":entry["address"],"logs":"\n".join(entry["lines"][-30:])}
+        p=entry["proc"]; alive=p.poll() is None
+        status=("running" if entry["address"] else "starting") if alive else "stopped"
+        return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-30:])}
 
 def stop_tunnel(sid):
     with TUNNEL_LOCK:
