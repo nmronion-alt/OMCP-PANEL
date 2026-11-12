@@ -553,8 +553,9 @@ class Handler(BaseHTTPRequestHandler):
                 f=server_path(folder,rel)
                 if not f.is_file() or f.is_symlink(): raise ValueError("Regular file not found")
                 size=f.stat().st_size
+                filename=re.sub(r"[^A-Za-z0-9_. -]","_",f.name)
                 self.send_response(200); self.send_header("Content-Type","application/octet-stream")
-                self.send_header("Content-Disposition",'attachment; filename="'+f.name.replace('"','')+'"')
+                self.send_header("Content-Disposition",'attachment; filename="'+filename+'"')
                 self.send_header("Content-Length",str(size)); self.send_header("Cache-Control","no-store")
                 self.end_headers()
                 with f.open("rb") as stream:
