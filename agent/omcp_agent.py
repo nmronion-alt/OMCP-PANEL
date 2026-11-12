@@ -677,6 +677,17 @@ class Handler(BaseHTTPRequestHandler):
                             if f.is_file() and not f.is_symlink(): z.write(f,f.relative_to(folder))
                     result={"backup":zpath.name,"bytes":zpath.stat().st_size}
                 return send(self,200,result)
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/rename",path)
+            if x:
+                folder=safe_dir(x.group(1)); old=server_path(folder,str(d.get("path","")))
+                name=str(d.get("name","")).strip()
+                if not old.exists() or old.is_symlink(): raise ValueError("File or folder not found")
+                if not name or name in (".","..") or "/" in name or "\\" in name or len(name)>180: raise ValueError("Enter a valid new name without path separators")
+                new=old.with_name(name)
+                if new.exists(): raise ValueError("A file or folder with that name already exists")
+                if new.parent.resolve()!=old.parent.resolve(): raise ValueError("Rename must stay in the same folder")
+                old.rename(new)
+                return send(self,200,{"renamed":True,"path":str(new.relative_to(folder))})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(mkdir|upload)",path)
             if x:
                 sid,kind=x.groups(); folder=safe_dir(sid); target=server_path(folder,d.get("path",""))
@@ -721,13 +732,24 @@ class Handler(BaseHTTPRequestHandler):
         fm=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
         if fm:
             try:
-                d=body(self); folder=safe_dir(fm.group(1)); target=server_path(folder,str(d.get("path","")))
-                if not target.exists() or target.is_symlink(): raise ValueError("File or folder not found")
-                if target.is_dir():
-                    if any(target.iterdir()): raise ValueError("Folder is not empty")
-                    target.rmdir()
-                else: target.unlink()
-                return send(self,200,{"deleted":True})
+                d=body(self); folder=safe_dir(fm.group(1))
+                paths=d.get("paths") if isinstance(d.get("paths"),list) else [d.get("path","")]
+                if not paths or len(paths)>200: raise ValueError("Select between 1 and 200 files or folders")
+                targets=[]
+                for rel in paths:
+                    target=server_path(folder,str(rel))
+                    if target==folder or not target.exists() or target.is_symlink(): raise ValueError("Invalid file or folder: "+str(rel))
+                    if target.is_dir():
+                        for child in target.rglob("*"):
+                            if child.is_symlink(): raise ValueError("Folder contains a symlink; refusing recursive delete")
+                    targets.append(target)
+                unique=[]
+                for target in sorted(targets,key=lambda p:len(p.parts)):
+                    if not any(parent==target or parent in target.parents for parent in unique): unique.append(target)
+                for target in unique:
+                    if target.is_dir(): shutil.rmtree(target)
+                    else: target.unlink()
+                return send(self,200,{"deleted":len(unique)})
             except Exception as e: return send(self,400,{"error":str(e)})
         x=re.fullmatch(r"/api/users/([A-Za-z0-9_.-]{3,24})",path)
         if not x: return send(self,404,{"error":"Not found"})
