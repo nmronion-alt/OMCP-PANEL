@@ -190,7 +190,7 @@ def java_runtimes():
     for p in dict.fromkeys(found):
         try:
             v=subprocess.run([p,"-version"],capture_output=True,text=True,timeout=5).stderr
-            m=re.search(r'version "(?:1\\.)?(\\d+)',v)
+            m=re.search(r'version "(?:1\.)?(\d+)',v)
             out.append({"path":p,"label":"Java "+(m.group(1) if m else "runtime")+" · "+p})
         except Exception: pass
     return out
