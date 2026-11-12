@@ -22,12 +22,11 @@ jobs:
       - name: Extract and check panel JavaScript
         run: |
           python - <<'PY'
-          import re
           from pathlib import Path
           html = Path("index.html").read_text(encoding="utf-8")
-          scripts = re.findall(r"<script>([\\s\\S]*?)</script>", html)
+          scripts = [part.split("</script>", 1)[0] for part in html.split("<script>")[1:]]
           if not scripts:
               raise SystemExit("No inline script found")
-          Path("/tmp/omcp-panel.js").write_text("\\n".join(scripts), encoding="utf-8")
+          Path("/tmp/omcp-panel.js").write_text("\n".join(scripts), encoding="utf-8")
           PY
           node --check /tmp/omcp-panel.js
