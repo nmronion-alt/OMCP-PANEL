@@ -6,7 +6,7 @@ except ImportError:
     paramiko=None
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs, quote, urlencode
 
 ROOT=Path(os.environ.get("OMCP_DATA","/var/lib/omcp")).resolve()
 SERVERS=ROOT/"servers"; CFGFILE=ROOT/"config.json"
@@ -821,6 +821,111 @@ def send(h,code,obj,typ="application/json; charset=utf-8"):
     h.send_response(code); h.send_header("Content-Type",typ); h.send_header("Cache-Control","no-store")
     h.send_header("X-Content-Type-Options","nosniff"); h.send_header("Content-Length",str(len(raw))); h.end_headers(); h.wfile.write(raw)
 
+
+BACKUP_CONFIG=ROOT/"backup-config.json"
+BACKUP_CONFIG_LOCK=threading.RLock()
+
+def load_backup_config():
+    try:
+        data=json.loads(BACKUP_CONFIG.read_text())
+        return data if isinstance(data,dict) else {"google_drive":{},"schedules":{}}
+    except FileNotFoundError:
+        return {"google_drive":{},"schedules":{}}
+    except Exception:
+        return {"google_drive":{},"schedules":{}}
+
+def save_backup_config(data):
+    tmp=BACKUP_CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data,indent=2),encoding="utf-8")
+    os.chmod(tmp,0o600)
+    os.replace(tmp,BACKUP_CONFIG)
+    os.chmod(BACKUP_CONFIG,0o600)
+
+def google_drive_configured(cfg=None):
+    cfg=cfg or load_backup_config()
+    drive=cfg.get("google_drive",{})
+    return all(drive.get(k) for k in ("client_id","client_secret","refresh_token"))
+
+def google_drive_upload(path):
+    cfg=load_backup_config().get("google_drive",{})
+    if not all(cfg.get(k) for k in ("client_id","client_secret","refresh_token")):
+        raise ValueError("Google Drive is not connected. Save OAuth Client ID, Client Secret and Refresh Token in Backups settings.")
+    token_body=urlencode({"client_id":cfg["client_id"],"client_secret":cfg["client_secret"],"refresh_token":cfg["refresh_token"],"grant_type":"refresh_token"}).encode()
+    req=urllib.request.Request("https://oauth2.googleapis.com/token",data=token_body,headers={"Content-Type":"application/x-www-form-urlencoded"},method="POST")
+    with urllib.request.urlopen(req,timeout=30) as response: token=json.load(response)
+    access=token.get("access_token")
+    if not access: raise ValueError("Google did not return an access token. Reconnect Drive and check the refresh token.")
+    p=Path(path); size=p.stat().st_size
+    metadata={"name":p.name}
+    if cfg.get("folder_id"): metadata["parents"]=[cfg["folder_id"]]
+    init=urllib.request.Request("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,webViewLink",data=json.dumps(metadata).encode(),headers={"Authorization":"Bearer "+access,"Content-Type":"application/json; charset=UTF-8","X-Upload-Content-Type":"application/zip","X-Upload-Content-Length":str(size)},method="POST")
+    with urllib.request.urlopen(init,timeout=30) as response: session=response.headers.get("Location")
+    if not session: raise ValueError("Google Drive did not return a resumable upload session.")
+    uploaded=0
+    with p.open("rb") as stream:
+        while uploaded<size:
+            chunk=stream.read(8*1024*1024)
+            if not chunk: break
+            end=uploaded+len(chunk)-1
+            put=urllib.request.Request(session,data=chunk,headers={"Authorization":"Bearer "+access,"Content-Type":"application/zip","Content-Length":str(len(chunk)),"Content-Range":"bytes "+str(uploaded)+"-"+str(end)+"/"+str(size)},method="PUT")
+            with urllib.request.urlopen(put,timeout=180) as response:
+                result=json.loads(response.read() or b"{}") if response.status in (200,201) else {}
+            uploaded=end+1
+    if uploaded!=size: raise ValueError("Google Drive upload ended early ("+str(uploaded)+"/"+str(size)+" bytes).")
+    return {"id":result.get("id",""),"name":result.get("name",p.name),"webViewLink":result.get("webViewLink","")}
+
+def create_live_backup(sid):
+    folder=safe_dir(sid); running=server_running(sid); paused=False
+    if running:
+        if not send_console_command(sid,"save-off"): raise ValueError("Could not pause world saving for a consistent live backup.")
+        paused=True
+        try:
+            send_console_command(sid,"save-all flush")
+            time.sleep(2.5)
+        except Exception: pass
+    try:
+        dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
+        zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+        with zipfile.ZipFile(zpath,"w",zipfile.ZIP_DEFLATED,compresslevel=3) as z:
+            for f in folder.rglob("*"):
+                if f.is_file() and not f.is_symlink() and f.name not in ("console.stdin",):
+                    z.write(f,f.relative_to(folder))
+        return {"backup":zpath.name,"bytes":zpath.stat().st_size,"path":str(zpath)}
+    finally:
+        if paused:
+            try: send_console_command(sid,"save-on")
+            except Exception: pass
+
+def backup_scheduler_loop():
+    while True:
+        try:
+            cfg=load_backup_config()
+            schedules=cfg.get("schedules",{})
+            now=int(time.time())
+            for sid,item in list(schedules.items()):
+                if not re.fullmatch(r"[a-f0-9]{8}",sid) or not isinstance(item,dict) or not item.get("enabled"): continue
+                interval=max(15,min(10080,int(item.get("interval_minutes",360))))
+                if now-int(item.get("last_run",0))<interval*60: continue
+                if not server_running(sid): continue
+                try:
+                    result=create_live_backup(sid)
+                    cloud=google_drive_upload(result["path"])
+                    with BACKUP_CONFIG_LOCK:
+                        latest=load_backup_config(); sched=latest.setdefault("schedules",{}).setdefault(sid,{})
+                        sched["last_run"]=now; sched["last_status"]="Uploaded "+result["backup"]+" to Google Drive"; sched["last_file_id"]=cloud.get("id","")
+                        save_backup_config(latest)
+                    print("OMCP scheduled backup uploaded: "+sid+" "+result["backup"],flush=True)
+                except Exception as e:
+                    with BACKUP_CONFIG_LOCK:
+                        latest=load_backup_config(); sched=latest.setdefault("schedules",{}).setdefault(sid,{})
+                        sched["last_run"]=now; sched["last_status"]="ERROR: "+str(e)[:500]
+                        save_backup_config(latest)
+                    print("OMCP scheduled backup failed for "+sid+": "+str(e),flush=True)
+        except Exception as e:
+            print("OMCP backup scheduler error: "+str(e),flush=True)
+        time.sleep(20)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args): print(fmt%args,flush=True)
     def auth(self):
@@ -867,6 +972,13 @@ class Handler(BaseHTTPRequestHandler):
                 enabled=set(re.findall(r"Enabling\s+([^\s]+)",logs))
                 failed=set(re.findall(r"(?:Could not load|Failed to load|Error loading)\s+(?:plugin\s+)?([A-Za-z0-9_.-]+)",logs,re.I))
                 return send(self,200,{"status":"running" if online else "offline","logs":logs,"plugins":{"installed":len(installed),"enabled":len(enabled),"failed":len(failed),"names":installed}})
+            if path=="/api/backups/google/config":
+                cfg=load_backup_config(); drive=cfg.get("google_drive",{})
+                return send(self,200,{"configured":google_drive_configured(cfg),"clientIdSaved":bool(drive.get("client_id")),"clientSecretSaved":bool(drive.get("client_secret")),"refreshTokenSaved":bool(drive.get("refresh_token")),"folderId":drive.get("folder_id","")})
+            sx=re.fullmatch(r"/api/servers/([a-f0-9]{8})/backup/schedule",path)
+            if sx:
+                cfg=load_backup_config(); item=cfg.get("schedules",{}).get(sx.group(1),{})
+                return send(self,200,{"schedule":item,"driveConfigured":google_drive_configured(cfg)})
             if path=="/api/backups":
                 dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
                 items=[]
@@ -964,6 +1076,25 @@ class Handler(BaseHTTPRequestHandler):
                 sid,action=tx.groups()
                 if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
                 return send(self,200,stop_tunnel(sid))
+            if path=="/api/backups/google/config":
+                cfg=load_backup_config(); drive=cfg.setdefault("google_drive",{})
+                for key in ("client_id","client_secret","refresh_token","folder_id"):
+                    value=str(d.get(key,"")).strip()
+                    if value: drive[key]=value
+                if d.get("clear"):
+                    cfg["google_drive"]={}
+                save_backup_config(cfg)
+                return send(self,200,{"configured":google_drive_configured(cfg)})
+            bs=re.fullmatch(r"/api/servers/([a-f0-9]{8})/backup/schedule",path)
+            if bs:
+                sid=bs.group(1); enabled=bool(d.get("enabled",False)); interval=int(d.get("interval_minutes",360))
+                if not 15<=interval<=10080: raise ValueError("Backup interval must be between 15 minutes and 7 days.")
+                cfg=load_backup_config()
+                if enabled and not google_drive_configured(cfg): raise ValueError("Connect Google Drive before enabling automatic cloud backups.")
+                schedules=cfg.setdefault("schedules",{}); old=schedules.get(sid,{})
+                schedules[sid]={"enabled":enabled,"interval_minutes":interval,"provider":"google_drive","last_run":old.get("last_run",0),"last_status":old.get("last_status","Not run yet"),"last_file_id":old.get("last_file_id","")}
+                save_backup_config(cfg)
+                return send(self,200,{"saved":True,"schedule":schedules[sid],"driveConfigured":google_drive_configured(cfg)})
             if path=="/api/servers": return send(self,201,{"server":create(d)})
             mx=re.fullmatch(r"/api/servers/([a-f0-9]{8})/minekube/install",path)
             if mx: return send(self,200,enable_minekube(mx.group(1),str(d.get("endpoint",""))))
@@ -1021,12 +1152,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not send_console_command(sid,cmd): raise ValueError("Console input is unavailable. Restart this server once to enable persistent console commands.")
                     result={"sent":True}
                 else:
-                    folder=safe_dir(sid); dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
-                    zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
-                    with zipfile.ZipFile(zpath,"w",zipfile.ZIP_DEFLATED) as z:
-                        for f in folder.rglob("*"):
-                            if f.is_file() and not f.is_symlink(): z.write(f,f.relative_to(folder))
-                    result={"backup":zpath.name,"bytes":zpath.stat().st_size}
+                    result=create_live_backup(sid)
+                    result.pop("path",None)
                 return send(self,200,result)
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/rename",path)
             if x:
@@ -1114,5 +1241,6 @@ class Handler(BaseHTTPRequestHandler):
         return send(self,200,{"deleted":target})
 
 start_sftp_service()
+threading.Thread(target=backup_scheduler_loop,daemon=True,name="omcp-backup-scheduler").start()
 print("OMCP listening at http://%s:%s"%(HOST,PORT),flush=True)
 ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
