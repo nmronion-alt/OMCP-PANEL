@@ -1,0 +1,13 @@
+services:
+  panel:
+    build: .
+    container_name: minecraft-panel
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${PANEL_PORT:-8787}:8787"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    security_opt:
+      - no-new-privileges:true
