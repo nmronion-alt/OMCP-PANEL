@@ -380,8 +380,7 @@ def plugin_search(query):
 def install_plugin(sid, project_id, source="modrinth"):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if meta.get("software","paper")!="paper": raise ValueError("The plugin installer currently supports Paper servers only.")
-    proc=PROCS.get(sid)
-    if proc and proc.poll() is None: raise ValueError("Stop the server before installing a plugin.")
+    if server_running(sid): raise ValueError("Stop the server before installing a plugin.")
     if source=="spiget":
         if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID")
         req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id)),headers={"User-Agent":"OMCP/0.6"})
@@ -428,19 +427,19 @@ def install_plugin(sid, project_id, source="modrinth"):
     return {"installed":filename,"path":"plugins/"+filename,"version":chosen.get("version_number"),"restartRequired":True}
 
 def server_metrics(sid):
-    folder=safe_dir(sid); proc=PROCS.get(sid)
-    running=bool(proc and proc.poll() is None)
+    folder=safe_dir(sid); pids=server_processes(sid); pid=pids[0] if pids else None
+    running=pid is not None
     memory=0; cpu=None
     if running:
         try:
-            stat=Path("/proc/%s/stat"%proc.pid).read_text()
+            stat=Path("/proc/%s/stat"%pid).read_text()
             fields=stat[stat.rfind(")")+2:].split()
             ticks=int(fields[11])+int(fields[12]); now=time.time(); prev=METRIC_PREV.get(sid)
             cpu=round(min(100.0,max(0.0,((ticks-prev[1])/(os.sysconf("SC_CLK_TCK")*max(.1,now-prev[0])))*100.0)),1) if prev else 0.0
             METRIC_PREV[sid]=(now,ticks)
         except Exception: cpu=0.0
         try:
-            for line in Path("/proc/%s/status"%proc.pid).read_text().splitlines():
+            for line in Path("/proc/%s/status"%pid).read_text().splitlines():
                 if line.startswith("VmRSS:"): memory=int(line.split()[1])*1024; break
         except Exception: memory=0
     else: METRIC_PREV.pop(sid,None)
