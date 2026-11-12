@@ -195,7 +195,7 @@ def server_action(server_id: str, action: str, _: bool = Depends(require_admin))
 @app.post("/api/servers/{server_id}/console")
 def server_console(server_id: str, payload: ConsoleInput, _: bool = Depends(require_admin)):
     command = payload.command.strip()
-    if not command or any(char in command for char in "\\r\\n\\x00"):
+    if not command or any(char in command for char in "\r\n\x00"):
         raise HTTPException(status_code=422, detail="Enter one console command on a single line.")
     if command.startswith("/"):
         command = command[1:]
