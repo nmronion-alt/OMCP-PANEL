@@ -16,7 +16,11 @@ curl -fsSL "$REPO/index.html" -o "$APP/index.html"
 chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
 chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
 
-if [[ -S /run/systemd/private ]] && [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" == "systemd" ]] && command -v systemctl >/dev/null 2>&1 && systemctl show-environment >/dev/null 2>&1; then
+SYSTEMD_STATE=""
+if command -v systemctl >/dev/null 2>&1; then
+  SYSTEMD_STATE="$(systemctl is-system-running 2>/dev/null || true)"
+fi
+if [[ -S /run/systemd/private ]] && [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" == "systemd" ]] && { [[ "$SYSTEMD_STATE" == "running" ]] || [[ "$SYSTEMD_STATE" == "degraded" ]]; }; then
   cat >/etc/systemd/system/omcp.service <<'UNIT'
 [Unit]
 Description=OMCP Onion Minecraft Panel
@@ -50,7 +54,7 @@ UNIT
   systemctl --no-pager --full status omcp || true
   echo "First-run Admin Key: sudo journalctl -u omcp -n 80 --no-pager"
 else
-  echo "systemd not detected; using a background process (Cloud Shell / container mode)."
+  echo "systemd is not usable (state: ${SYSTEMD_STATE:-unavailable}); using background-process mode."
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
     echo "Existing OMCP process detected (PID $(cat "$DATA/agent.pid")); not starting a duplicate."
   else
