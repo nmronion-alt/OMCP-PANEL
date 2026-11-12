@@ -909,6 +909,13 @@ def create_live_backup(sid):
             try: send_console_command(sid,"save-on")
             except Exception: pass
 
+def prune_uploaded_backups(sid, keep=3):
+    dest=ROOT/"backups"
+    items=sorted((p for p in dest.glob(sid+"-*.zip") if p.is_file() and not p.is_symlink()),key=lambda p:p.stat().st_mtime,reverse=True)
+    for old in items[max(0,int(keep)):]:
+        try: old.unlink()
+        except OSError: pass
+
 def backup_scheduler_loop():
     while True:
         try:
@@ -923,6 +930,7 @@ def backup_scheduler_loop():
                 try:
                     result=create_live_backup(sid)
                     cloud=google_drive_upload(result["path"])
+                    prune_uploaded_backups(sid,3)
                     with BACKUP_CONFIG_LOCK:
                         latest=load_backup_config(); sched=latest.setdefault("schedules",{}).setdefault(sid,{})
                         sched["last_run"]=now; sched["last_status"]="Uploaded "+result["backup"]+" to Google Drive"; sched["last_file_id"]=cloud.get("id","")
