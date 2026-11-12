@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time, socket, posixpath, stat, errno, tarfile, platform
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform
 try:
     import paramiko
 except ImportError:
@@ -599,13 +599,13 @@ def minekube_info(sid):
     state=MINEKUBE_STATE.get(sid,{})
     logs=folder/"console.log"
     raw=logs.read_text(errors="replace")[-100000:] if logs.exists() else ""
-    match=re.search(r"(?:Your public address|Public address|Endpoint address):\\s*([a-z0-9-]+\\.play\\.minekube\\.net)",raw,re.I)
+    match=re.search(r"(?:Your public address|Public address|Endpoint address):\s*([a-z0-9-]+\.play\.minekube\.net)",raw,re.I)
     address=match.group(1) if match else ((state.get("endpoint") or "")+".play.minekube.net" if state.get("endpoint") else None)
     installed=plugin.is_file()
     return {"status":"running" if address and server_running(sid) else ("installed" if installed else "stopped"),"provider":"minekube","address":address,"installed":installed,"restartRequired":installed and not bool(address) and not server_running(sid),"logs":raw[-5000:] if raw else "Install the Connect plugin, then start/restart this server. Minekube will print its public address in the console."}
 
 def start_tunnel(sid, provider):
-    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text()); port=int(meta.get("port",25565))
     if provider=="minekube": return enable_minekube(sid, "")
     if provider not in ("pinggy","bore"): raise ValueError("Unknown routing provider")
     if not server_running(sid): raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
@@ -622,16 +622,16 @@ def start_tunnel(sid, provider):
                     line=line.rstrip()
                     with TUNNEL_LOCK:
                         entry["lines"].append(line); entry["lines"]=entry["lines"][-80:]
-                        match=re.search(r"(?:bore\\.pub:|listening at\\s+)(?:tcp://)?(?:bore\\.pub:)?(\\d{2,5})",line,re.I)
+                        match=re.search(r"(?:bore\.pub:|listening at\s+)(?:tcp://)?(?:bore\.pub:)?(\d{2,5})",line,re.I)
                         if match: entry["address"]="bore.pub:"+match.group(1)
             except Exception as e:
                 with TUNNEL_LOCK: entry["lines"].append("Bore output error: "+str(e))
         threading.Thread(target=collect_bore,daemon=True).start()
         deadline=time.time()+25
         while time.time()<deadline:
-            if entry.get("address"): return {"status":"running","provider":"bore","port":port,"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
+            if entry.get("address"): return {"status":"running","provider":"bore","port":port,"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
             if proc.poll() is not None:
-                time.sleep(0.2); detail="\\n".join(entry["lines"][-30:]) or "Bore exited without returning a port."
+                time.sleep(0.2); detail="\n".join(entry["lines"][-30:]) or "Bore exited without returning a port."
                 raise ValueError("Bore tunnel exited (code "+str(proc.returncode)+"). "+detail[-1600:])
             time.sleep(0.2)
         return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"\\n".join(entry["lines"][-20:])}
@@ -868,8 +868,12 @@ def google_drive_upload(path):
             if not chunk: break
             end=uploaded+len(chunk)-1
             put=urllib.request.Request(session,data=chunk,headers={"Authorization":"Bearer "+access,"Content-Type":"application/zip","Content-Length":str(len(chunk)),"Content-Range":"bytes "+str(uploaded)+"-"+str(end)+"/"+str(size)},method="PUT")
-            with urllib.request.urlopen(put,timeout=180) as response:
-                result=json.loads(response.read() or b"{}") if response.status in (200,201) else {}
+            try:
+                with urllib.request.urlopen(put,timeout=180) as response:
+                    result=json.loads(response.read() or b"{}") if response.status in (200,201) else {}
+            except urllib.error.HTTPError as e:
+                if e.code==308: result={}
+                else: raise
             uploaded=end+1
     if uploaded!=size: raise ValueError("Google Drive upload ended early ("+str(uploaded)+"/"+str(size)+" bytes).")
     return {"id":result.get("id",""),"name":result.get("name",p.name),"webViewLink":result.get("webViewLink","")}
