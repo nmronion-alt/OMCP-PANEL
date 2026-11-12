@@ -9,11 +9,59 @@ SERVERS=ROOT/"servers"; CFGFILE=ROOT/"config.json"
 WEB=Path(os.environ.get("OMCP_WEB","/opt/omcp/index.html"))
 HOST=os.environ.get("OMCP_HOST","127.0.0.1"); PORT=int(os.environ.get("OMCP_PORT","8765"))
 ROOT.mkdir(parents=True,exist_ok=True); SERVERS.mkdir(parents=True,exist_ok=True)
-if not CFGFILE.exists():
-    token=secrets.token_urlsafe(32); CFGFILE.write_text(json.dumps({"token":token})); os.chmod(CFGFILE,0o600)
-    print("\nOMCP FIRST-RUN ADMIN KEY (save this):\n"+token+"\n",flush=True)
-TOKEN=json.loads(CFGFILE.read_text())["token"]
+USERSFILE=ROOT/"users.json"
+SESSIONS={}
+SESSION_LOCK=threading.RLock()
+SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
+
+def load_users():
+    if not USERSFILE.exists(): return {}
+    try:
+        data=json.loads(USERSFILE.read_text())
+        return data if isinstance(data,dict) else {}
+    except Exception:
+        raise RuntimeError("users.json is invalid; restore it from backup before continuing")
+
+def save_users(users):
+    tmp=USERSFILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(users,indent=2))
+    os.chmod(tmp,0o600)
+    tmp.replace(USERSFILE)
+
+def password_hash(password, salt=None):
+    salt=salt or secrets.token_bytes(16)
+    digest=__import__("hashlib").pbkdf2_hmac("sha256",password.encode(),salt,310000)
+    import base64
+    return {"salt":base64.b64encode(salt).decode(),"hash":base64.b64encode(digest).decode(),"iterations":310000}
+
+def password_ok(password, record):
+    import base64, hashlib
+    try:
+        salt=base64.b64decode(record["salt"])
+        expected=base64.b64decode(record["hash"])
+        actual=hashlib.pbkdf2_hmac("sha256",password.encode(),salt,int(record["iterations"]))
+        return secrets.compare_digest(actual,expected)
+    except Exception:
+        return False
+
+def new_session(username):
+    token=secrets.token_urlsafe(32)
+    with SESSION_LOCK: SESSIONS[token]={"username":username,"expires":time.time()+SESSION_TTL}
+    return token
+
+def session_user(handler):
+    header=handler.headers.get("Authorization","")
+    if not header.startswith("Bearer "): return None
+    token=header[7:]
+    with SESSION_LOCK:
+        item=SESSIONS.get(token)
+        if not item: return None
+        if item["expires"]<time.time():
+            SESSIONS.pop(token,None); return None
+        item["expires"]=time.time()+SESSION_TTL
+        return item["username"]
+
 
 def safe_dir(sid):
     if not re.fullmatch(r"[a-f0-9]{8}",sid or ""): raise ValueError("Invalid server id")
@@ -86,15 +134,21 @@ def send(h,code,obj,typ="application/json; charset=utf-8"):
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args): print(fmt%args,flush=True)
-    def auth(self): return secrets.compare_digest(self.headers.get("Authorization",""),"Bearer "+TOKEN)
+    def auth(self):
+        self.username=session_user(self)
+        return self.username is not None
     def do_GET(self):
         path=urlparse(self.path).path
         if path=="/api/health": return send(self,200,{"ok":True,"name":"OMCP"})
+        if path=="/api/setup/status": return send(self,200,{"setupRequired":len(load_users())==0})
         if path=="/" or path=="/index.html":
             try: return send(self,200,WEB.read_bytes(),"text/html; charset=utf-8")
             except Exception: return send(self,404,{"error":"UI file missing"})
         if not self.auth(): return send(self,401,{"error":"Admin key required"})
         try:
+            if path=="/api/users":
+                if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
+                return send(self,200,{"users":[{"username":u,"role":v.get("role","user")} for u,v in load_users().items()]})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
             if path=="/api/metrics":
                 m={}
@@ -119,12 +173,39 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e: return send(self,400,{"error":str(e)})
     def do_POST(self):
         path=urlparse(self.path).path
-        if path=="/api/auth/check":
+        if path in ("/api/setup","/api/login"):
             try:
-                ok=secrets.compare_digest(str(body(self).get("token","")),TOKEN)
-                return send(self,200 if ok else 401,{"ok":ok})
+                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
+                users=load_users()
+                if path=="/api/setup":
+                    if users: return send(self,409,{"error":"Admin account already exists"})
+                    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
+                    if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
+                    users[username]={"password":password_hash(password),"role":"admin","created":int(time.time())}
+                    save_users(users)
+                else:
+                    record=users.get(username)
+                    if not record or not password_ok(password,record): return send(self,401,{"error":"Incorrect username or password"})
+                return send(self,200,{"token":new_session(username),"user":{"username":username,"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
-        if not self.auth(): return send(self,401,{"error":"Admin key required"})
+        if path=="/api/logout":
+            header=self.headers.get("Authorization","")
+            if header.startswith("Bearer "):
+                with SESSION_LOCK: SESSIONS.pop(header[7:],None)
+            return send(self,200,{"ok":True})
+        if not self.auth(): return send(self,401,{"error":"Login required"})
+        if path=="/api/users":
+            try:
+                if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
+                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
+                if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
+                if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
+                users=load_users()
+                if username in users: return send(self,409,{"error":"Username already exists"})
+                users[username]={"password":password_hash(password),"role":"user","created":int(time.time())}
+                save_users(users)
+                return send(self,201,{"user":{"username":username,"role":"user"}})
+            except Exception as e: return send(self,400,{"error":str(e)})
         try:
             d=body(self)
             if path=="/api/servers": return send(self,201,{"server":create(d)})
@@ -158,8 +239,18 @@ class Handler(BaseHTTPRequestHandler):
             return send(self,404,{"error":"Not found"})
         except Exception as e: return send(self,400,{"error":str(e)})
     def do_DELETE(self):
-        if not self.auth(): return send(self,401,{"error":"Admin key required"})
-        return send(self,405,{"error":"Deletion disabled in MVP; back up before manual removal"})
+        if not self.auth(): return send(self,401,{"error":"Login required"})
+        path=urlparse(self.path).path
+        x=re.fullmatch(r"/api/users/([A-Za-z0-9_.-]{3,24})",path)
+        if not x: return send(self,404,{"error":"Not found"})
+        if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
+        target=x.group(1); users=load_users()
+        if target==self.username or target not in users or users[target].get("role")=="admin": return send(self,400,{"error":"Cannot remove this account"})
+        users.pop(target); save_users(users)
+        with SESSION_LOCK:
+            for key,value in list(SESSIONS.items()):
+                if value["username"]==target: SESSIONS.pop(key,None)
+        return send(self,200,{"deleted":target})
 
 print("OMCP listening at http://%s:%s"%(HOST,PORT),flush=True)
 ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
