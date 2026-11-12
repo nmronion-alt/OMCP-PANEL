@@ -4,9 +4,11 @@ OMCP is a standalone Minecraft Java server panel for Linux VPS hosts, including 
 
 ## Functional MVP included
 
-- One local OMCP agent and web panel; no user-account system.
-- A generated Admin Key protects management actions (necessary because the panel can start/stop game servers).
-- Create Paper servers by name, Minecraft version, RAM and port, with explicit Minecraft EULA acknowledgement.
+- First-run Admin account setup, username/password login, separate user accounts, and salted PBKDF2 password hashes.
+- Username matching is case-insensitive; passwords remain case-sensitive.
+- Local OMCP agent and web panel; management API stays bound to localhost by default.
+- Three-step server wizard (Minecraft version, software, RAM/details); Paper and Vanilla server downloads are currently implemented with official download APIs and explicit Minecraft EULA acknowledgement.
+- Fabric, Forge, Spigot and Velocity are visible as planned choices but are not implemented yet.
 - Start, stop, restart, Minecraft console commands and recent log viewing.
 - Basic text file browser/editor, ZIP backups, server list and Linux memory/CPU-thread metrics.
 - Local API binds to `127.0.0.1:8765` by default.
@@ -32,7 +34,7 @@ The installer installs Python 3 and OpenJDK 21, creates a dedicated unprivileged
 sudo journalctl -u omcp -n 80 --no-pager  # systemd VPS\nsudo cat /var/lib/omcp/agent.log          # no-systemd Cloud Shell/container
 ```
 
-Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listener.
+Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listener. The Routing tab currently provides manual Cloudflare Tunnel instructions only; automatic tunnel lifecycle management is not implemented.
 
 ## Remote access / private-IP VPS
 
@@ -42,7 +44,7 @@ Cloudflare's ordinary web tunnel does not relay arbitrary Minecraft Java TCP tra
 
 ## MVP limitations
 
-Paper only; selected versions are downloaded from PaperMC's API. Java 21 is installed by the Ubuntu/Debian installer. The MVP does not yet include Fabric/Forge, plugin catalogue, live CPU percentage, delete/restore UI, automatic Cloudflare setup, or a TCP game-routing adapter. Test on a disposable VPS and back up worlds before production use.
+Paper and Vanilla creation are implemented; Paper uses PaperMC's current v3 downloads API. Other server software adapters are not implemented yet. Java 21 is installed by the Ubuntu/Debian installer. The MVP does not yet include Fabric/Forge, plugin catalogue, live CPU percentage, delete/restore UI, automatic Cloudflare tunnel provisioning or TCP game-routing adapters. The Routing tab documents manual Cloudflare setup; it does not start a tunnel itself. Test on a disposable VPS and back up worlds before production use.
 
 ## Source layout
 
