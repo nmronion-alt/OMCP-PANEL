@@ -2,7 +2,7 @@
 import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, quote
 
 ROOT=Path(os.environ.get("OMCP_DATA","/var/lib/omcp")).resolve()
 SERVERS=ROOT/"servers"; CFGFILE=ROOT/"config.json"
@@ -201,22 +201,25 @@ def stop(sid):
 def start_tunnel(sid, provider):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if provider!="pinggy": raise ValueError("Only Pinggy is connected in this build; Bore and Minekube adapters are not ready yet.")
+    server=PROCS.get(sid)
+    if not server or server.poll() is not None: raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
     with TUNNEL_LOCK:
         old=TUNNELS.get(sid)
         if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
-        cmd=[ssh,"-p","443","-o","BatchMode=yes","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-R0:localhost:"+str(meta["port"]),"tcp@free.pinggy.io"]
-        proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True)
-        entry={"proc":proc,"provider":"pinggy","lines":[],"address":None,"started":int(time.time())}
-        TUNNELS[sid]=entry
+        askpass=ROOT/"pinggy-askpass.sh"
+        askpass.write_text("#!/bin/sh\nprintf '\\n'\n"); os.chmod(askpass,0o700)
+        env=os.environ.copy(); env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
+        cmd=[ssh,"-p","443","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=publickey,password,keyboard-interactive","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(meta["port"]),"tcp@free.pinggy.io"]
+        proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
+        entry={"proc":proc,"provider":"pinggy","lines":[],"address":None,"started":int(time.time())}; TUNNELS[sid]=entry
     def collect():
         try:
             for line in proc.stdout:
                 line=line.rstrip()
                 with TUNNEL_LOCK:
-                    entry["lines"].append(line)
-                    entry["lines"]=entry["lines"][-80:]
+                    entry["lines"].append(line); entry["lines"]=entry["lines"][-80:]
                     match=re.search(r"tcp://((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}):(\d{2,5})",line)
                     if match: entry["address"]=match.group(1)+":"+match.group(2)
         except Exception as e:
@@ -244,26 +247,27 @@ def stop_tunnel(sid):
 
 def server_metrics(sid):
     folder=safe_dir(sid); proc=PROCS.get(sid)
-    mem=0
-    if proc and proc.poll() is None:
+    running=bool(proc and proc.poll() is None)
+    memory=0; cpu=None
+    if running:
+        try:
+            stat=Path("/proc/%s/stat"%proc.pid).read_text()
+            fields=stat[stat.rfind(")")+2:].split()
+            ticks=int(fields[11])+int(fields[12]); now=time.time(); prev=METRIC_PREV.get(sid)
+            cpu=round(min(100.0,max(0.0,((ticks-prev[1])/(os.sysconf("SC_CLK_TCK")*max(.1,now-prev[0])))*100.0)),1) if prev else 0.0
+            METRIC_PREV[sid]=(now,ticks)
+        except Exception: cpu=0.0
         try:
             for line in Path("/proc/%s/status"%proc.pid).read_text().splitlines():
-                if line.startswith("VmRSS:"): mem=int(line.split()[1])*1024; break
-        except Exception: pass
-    usage=shutil.disk_usage(folder)
-    net_in=net_out=0
-    try:
-        for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
-            name,values=line.split(":",1); vals=values.split()
-            if name.strip()!="lo": net_in+=int(vals[0]); net_out+=int(vals[8])
-    except Exception: pass
-    now=time.time(); prev=METRIC_PREV.get(sid); in_rate=out_rate=0
-    if prev:
-        dt=max(.1,now-prev[0]); in_rate=max(0,int((net_in-prev[1])/dt)); out_rate=max(0,int((net_out-prev[2])/dt))
-    METRIC_PREV[sid]=(now,net_in,net_out)
-    try: cpu=min(100,round(os.getloadavg()[0]*100/max(1,os.cpu_count() or 1),1))
-    except Exception: cpu=0
-    return {"cpuLoad":cpu,"memoryUsed":mem,"diskUsed":usage.used,"diskTotal":usage.total,"networkInRate":in_rate,"networkOutRate":out_rate,"status":"running" if proc and proc.poll() is None else "stopped"}
+                if line.startswith("VmRSS:"): memory=int(line.split()[1])*1024; break
+        except Exception: memory=0
+    else: METRIC_PREV.pop(sid,None)
+    disk=0
+    for f in folder.rglob("*"):
+        try:
+            if f.is_file() and not f.is_symlink(): disk+=f.stat().st_size
+        except OSError: pass
+    return {"status":"running" if running else "stopped","cpuLoad":cpu,"memoryUsed":memory if running else None,"diskUsed":disk,"networkInRate":None,"networkOutRate":None}
 
 def server_path(folder, rel):
     rel=str(rel or "")
@@ -440,17 +444,31 @@ class Handler(BaseHTTPRequestHandler):
                 return send(self,200,{"uploaded":len(chunk),"size":target.stat().st_size})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
             if x:
-                folder=safe_dir(x.group(1)); f=(folder/str(d.get("path",""))).resolve()
-                if folder not in f.parents or f.is_symlink(): raise ValueError("Unsafe path")
-                content=str(d.get("content",""))
-                if len(content)>500000: raise ValueError("File too large")
-                f.parent.mkdir(parents=True,exist_ok=True); f.write_text(content)
-                return send(self,200,{"saved":True})
+                folder=safe_dir(x.group(1)); f=server_path(folder,str(d.get("path","")))
+                if f.exists() and (f.is_symlink() or not f.is_file()): raise ValueError("Only regular files can be edited")
+                raw=str(d.get("content","")).encode("utf-8")
+                if len(raw)>900000: raise ValueError("File too large (maximum 900 KB)")
+                f.parent.mkdir(parents=True,exist_ok=True)
+                tmp=f.with_name(f.name+".omcp-tmp"); tmp.write_bytes(raw)
+                if f.exists(): os.chmod(tmp,f.stat().st_mode & 0o777)
+                os.replace(tmp,f)
+                return send(self,200,{"saved":True,"bytes":len(raw)})
             return send(self,404,{"error":"Not found"})
         except Exception as e: return send(self,400,{"error":str(e)})
     def do_DELETE(self):
         if not self.auth(): return send(self,401,{"error":"Login required"})
         path=urlparse(self.path).path
+        fm=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
+        if fm:
+            try:
+                d=body(self); folder=safe_dir(fm.group(1)); target=server_path(folder,str(d.get("path","")))
+                if not target.exists() or target.is_symlink(): raise ValueError("File or folder not found")
+                if target.is_dir():
+                    if any(target.iterdir()): raise ValueError("Folder is not empty")
+                    target.rmdir()
+                else: target.unlink()
+                return send(self,200,{"deleted":True})
+            except Exception as e: return send(self,400,{"error":str(e)})
         x=re.fullmatch(r"/api/users/([A-Za-z0-9_.-]{3,24})",path)
         if not x: return send(self,404,{"error":"Not found"})
         if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
