@@ -52,7 +52,8 @@ def allocate_port()->int:
 def is_running(directory:Path,meta:dict)->bool:
     pid=meta.get("pid")
     if not isinstance(pid,int) or pid<2: return False
-    try: return str(directory/"server.jar").encode() in Path(f"/proc/{pid}/cmdline").read_bytes()
+    try: proc=Path(f"/proc/{pid}")
+        return proc.joinpath("cwd").resolve()==directory.resolve() and b"server.jar" in proc.joinpath("cmdline").read_bytes()
     except OSError: return False
 def configure_properties(directory:Path,meta:dict):
     props=directory/"server.properties"; current={}
@@ -131,7 +132,7 @@ def create_server(payload:ServerCreate,_:bool=Depends(require_admin)):
         save_meta(target,meta); (target/"eula.txt").write_text("eula=true\n"); configure_properties(target,meta)
         return {"id":slug,"name":name,"status":"stopped","target":f"127.0.0.1:{meta['port']}","message":f"{info} downloaded. Start the server when ready."}
     except Exception: shutil.rmtree(target,ignore_errors=True); raise
-@app.post("/api/servers/{server_id}/{action}")
+@app.post("/api/servers/{server_id}/actions/{action}")
 def server_action(server_id:str,action:str,_:bool=Depends(require_admin)):
     if action not in {"start","stop","restart"}: raise HTTPException(400,"Unsupported action.")
     directory=server_dir(server_id); meta=metadata(directory); running=is_running(directory,meta)
