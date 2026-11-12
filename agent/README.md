@@ -1,15 +1,14 @@
-# OMCP Local Agent
+# OMCP local agent
 
-The local agent will run beside the web UI and manage Minecraft Java server processes directly. It is not Wings and does not use the Pterodactyl API.
+`omcp_agent.py` is the functional first MVP of the local agent.
 
-Responsibilities:
-- Maintain a registry of OMCP-managed servers.
-- Create isolated server directories and install supported server software.
-- Launch each server under a PTY-backed process supervisor for reliable console input/output.
-- Stop/restart processes safely and report PID, exit status, CPU/RAM and logs.
-- Expose a loopback-only authenticated API to the panel.
-- Enforce per-server path boundaries and never expose an unrestricted shell.
+- Python standard library only.
+- Loopback API listener by default: `127.0.0.1:8765`.
+- Generates a random Admin Key on first run and stores it in `/var/lib/omcp/config.json` with restrictive file permissions; the key is printed once in service logs for initial setup.
+- Creates Paper server directories and downloads the selected Paper build.
+- Start, stop, restart, console commands and recent log viewing.
+- Basic text file list/read/write and ZIP backup.
+- Launches Java with argument arrays rather than a shell command.
+- Runs as a dedicated unprivileged `omcp` account when installed with the supplied installer.
 
-An already-running unmanaged Java process may not have an attachable stdin. Import should scan user-approved directories and, where console control is needed, require a planned stop and relaunch under the OMCP supervisor.
-
-Implementation status: design only; no working agent/API is shipped yet.
+This is an MVP, not a fully production-hardened hosting platform. Keep the API private behind Cloudflare Access, test on a disposable host and maintain external backups. PTY, imported servers, Fabric/Forge, plugin manager, resource quotas, backup restore and TCP routing adapters are not implemented yet.
