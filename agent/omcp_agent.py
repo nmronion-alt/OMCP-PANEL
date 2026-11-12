@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time, socket
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time, socket, posixpath, stat, errno
+try:
+    import paramiko
+except ImportError:
+    paramiko=None
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -41,6 +45,166 @@ def password_hash(password, salt=None):
     digest=__import__("hashlib").pbkdf2_hmac("sha256",password.encode(),salt,310000)
     import base64
     return {"salt":base64.b64encode(salt).decode(),"hash":base64.b64encode(digest).decode(),"iterations":310000}
+
+SFTP_PORT=int(os.environ.get("OMCP_SFTP_PORT","2022"))
+SFTP_STATE={"available":False,"status":"starting","error":"","fingerprint":""}
+SFTP_HOST_KEY=ROOT/"sftp_host_rsa"
+
+if paramiko:
+    class OMCPSSFTPAuth(paramiko.ServerInterface):
+        def __init__(self): self.sid=None
+        def check_channel_request(self,kind,chanid):
+            return paramiko.OPEN_SUCCEEDED if kind=="session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+        def get_allowed_auths(self,username): return "password"
+        def check_auth_password(self,username,password):
+            m=re.fullmatch(r"omcp-([a-f0-9]{8})",str(username))
+            if not m: return paramiko.AUTH_FAILED
+            sid=m.group(1)
+            try:
+                meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
+                record=meta.get("sftp",{}).get("password_hash")
+                if not record or not password_ok(password,record): return paramiko.AUTH_FAILED
+            except Exception: return paramiko.AUTH_FAILED
+            self.sid=sid
+            return paramiko.AUTH_SUCCESSFUL
+
+    class OMCPSSFTPInterface(paramiko.SFTPServerInterface):
+        def __init__(self,server,*args,**kwargs):
+            super().__init__(server,*args,**kwargs)
+            self.root=safe_dir(server.sid).resolve()
+        def _path(self,path):
+            raw=str(path or "/").replace("\\","/")
+            parts=[]
+            for part in raw.split("/"):
+                if part in ("","."): continue
+                if part=="..": raise PermissionError("Parent-directory access is blocked")
+                parts.append(part)
+            target=self.root.joinpath(*parts)
+            cur=self.root
+            for part in parts:
+                cur=cur/part
+                if cur.is_symlink(): raise PermissionError("Symlinks are not allowed")
+            resolved=target.resolve()
+            if resolved!=self.root and self.root not in resolved.parents: raise PermissionError("Path outside this server")
+            return target
+        def canonicalize(self,path):
+            try: return posixpath.normpath("/"+str(path or "").lstrip("/"))
+            except Exception: return "/"
+        def list_folder(self,path):
+            try:
+                target=self._path(path)
+                out=[]
+                for child in target.iterdir():
+                    if child.is_symlink(): continue
+                    attr=paramiko.SFTPAttributes.from_stat(child.stat()); attr.filename=child.name; out.append(attr)
+                return out
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def stat(self,path):
+            try: return paramiko.SFTPAttributes.from_stat(self._path(path).stat())
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def lstat(self,path): return self.stat(path)
+        def open(self,path,flags,attr):
+            try:
+                target=self._path(path)
+                if not target.parent.is_dir(): return paramiko.SFTP_NO_SUCH_FILE
+                mode=attr.st_mode if getattr(attr,"st_mode",None) else 0o640
+                fd=os.open(target,flags,mode)
+                handle=paramiko.SFTPHandle(flags)
+                writing=bool(flags & (os.O_WRONLY|os.O_RDWR))
+                reading=not bool(flags & os.O_WRONLY)
+                if reading: handle.readfile=os.fdopen(os.dup(fd),"rb" if not writing else "r+b")
+                if writing: handle.writefile=os.fdopen(os.dup(fd),"wb" if not reading else "r+b")
+                os.close(fd)
+                return handle
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_FAILURE
+        def remove(self,path):
+            try: self._path(path).unlink(); return paramiko.SFTP_OK
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def mkdir(self,path,attr):
+            try: self._path(path).mkdir(mode=(attr.st_mode & 0o777) if attr.st_mode else 0o750); return paramiko.SFTP_OK
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def rmdir(self,path):
+            try: self._path(path).rmdir(); return paramiko.SFTP_OK
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def rename(self,oldpath,newpath):
+            try:
+                old=self._path(oldpath); new=self._path(newpath)
+                if new.exists(): return paramiko.SFTP_FAILURE
+                old.rename(new); return paramiko.SFTP_OK
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def chattr(self,path,attr):
+            try:
+                target=self._path(path)
+                if attr.st_mode is not None: os.chmod(target,attr.st_mode & 0o777)
+                if attr.st_atime is not None or attr.st_mtime is not None:
+                    st=target.stat(); os.utime(target,(attr.st_atime if attr.st_atime is not None else st.st_atime,attr.st_mtime if attr.st_mtime is not None else st.st_mtime))
+                return paramiko.SFTP_OK
+            except OSError as e: return paramiko.SFTPServer.convert_errno(e.errno)
+            except Exception: return paramiko.SFTP_PERMISSION_DENIED
+        def symlink(self,*args): return paramiko.SFTP_OP_UNSUPPORTED
+        def readlink(self,*args): return paramiko.SFTP_OP_UNSUPPORTED
+
+def _serve_sftp_client(client,host_key):
+    if not paramiko:
+        client.close(); return
+    transport=None
+    try:
+        transport=paramiko.Transport(client)
+        transport.add_server_key(host_key)
+        transport.set_subsystem_handler("sftp",paramiko.SFTPServer,OMCPSSFTPInterface)
+        transport.start_server(server=OMCPSSFTPAuth())
+        transport.set_keepalive(30)
+        while transport.is_active(): time.sleep(0.5)
+    except Exception:
+        pass
+    finally:
+        try:
+            if transport: transport.close()
+            else: client.close()
+        except Exception: pass
+
+def start_sftp_service():
+    global SFTP_STATE
+    if not paramiko:
+        SFTP_STATE={"available":False,"status":"unavailable","error":"Python Paramiko package is missing. Re-run the OMCP installer.","fingerprint":""}; return
+    try:
+        if SFTP_HOST_KEY.exists(): host_key=paramiko.RSAKey.from_private_key_file(str(SFTP_HOST_KEY))
+        else:
+            host_key=paramiko.RSAKey.generate(2048); host_key.write_private_key_file(str(SFTP_HOST_KEY)); os.chmod(SFTP_HOST_KEY,0o600)
+        fingerprint=":".join("%02x"%b for b in host_key.get_fingerprint())
+        listener=socket.socket(socket.AF_INET,socket.SOCK_STREAM); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        listener.bind(("0.0.0.0",SFTP_PORT)); listener.listen(64); listener.settimeout(1.0)
+        def accept_loop():
+            while True:
+                try: client,_=listener.accept()
+                except socket.timeout: continue
+                except OSError: break
+                threading.Thread(target=_serve_sftp_client,args=(client,host_key),daemon=True).start()
+        threading.Thread(target=accept_loop,daemon=True,name="omcp-sftp").start()
+        SFTP_STATE={"available":True,"status":"listening","error":"","fingerprint":fingerprint}
+        print("OMCP SFTP listening on 0.0.0.0:%s"%SFTP_PORT,flush=True)
+    except Exception as e:
+        SFTP_STATE={"available":False,"status":"error","error":str(e),"fingerprint":""}
+        print("OMCP SFTP could not start: "+str(e),flush=True)
+
+def sftp_info(sid):
+    meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
+    return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":SFTP_PORT,"fingerprint":SFTP_STATE.get("fingerprint","")}
+
+def reset_sftp_password(sid):
+    if not SFTP_STATE.get("available"): raise ValueError(SFTP_STATE.get("error") or "SFTP service is not running")
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    password=secrets.token_urlsafe(18)
+    meta["sftp"]={"password_hash":password_hash(password),"created":int(time.time())}
+    atomic_json(folder/"omcp.json",meta)
+    return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":SFTP_PORT,"fingerprint":SFTP_STATE.get("fingerprint","")}
 
 def password_ok(password, record):
     import base64, hashlib
@@ -528,6 +692,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not u: return send(self,401,{"error":"Account no longer exists"})
                 return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp",path)
+            if x: return send(self,200,sftp_info(x.group(1)))
             x=re.fullmatch(r"/api/software/([a-z]+)/versions",path)
             if x: return send(self,200,{"software":x.group(1),"versions":software_versions(x.group(1))})
             if path=="/api/metrics":
@@ -643,6 +809,8 @@ class Handler(BaseHTTPRequestHandler):
                 if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
                 return send(self,200,stop_tunnel(sid))
             if path=="/api/servers": return send(self,201,{"server":create(d)})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp/reset",path)
+            if x: return send(self,200,reset_sftp_password(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
             if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId","")),str(d.get("source","modrinth"))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
@@ -787,5 +955,6 @@ class Handler(BaseHTTPRequestHandler):
                 if value["username"]==target: SESSIONS.pop(key,None)
         return send(self,200,{"deleted":target})
 
+start_sftp_service()
 print("OMCP listening at http://%s:%s"%(HOST,PORT),flush=True)
 ThreadingHTTPServer((HOST,PORT),Handler).serve_forever()
