@@ -167,7 +167,7 @@ def start_tunnel(sid, provider):
                 with TUNNEL_LOCK:
                     entry["lines"].append(line)
                     entry["lines"]=entry["lines"][-80:]
-                    match=re.search(r"tcp://((?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}):(\\d{2,5})",line)
+                    match=re.search(r"tcp://((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}):(\d{2,5})",line)
                     if match: entry["address"]=match.group(1)+":"+match.group(2)
         except Exception as e:
             with TUNNEL_LOCK: entry["lines"].append("Tunnel output error: "+str(e))
