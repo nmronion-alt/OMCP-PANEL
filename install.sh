@@ -67,25 +67,19 @@ system_status(){
   if is_cloud_shell; then warn 'Cloud Shell detected: temporary session; not a persistent VPS.'; fi
 }
 smart_check(){
-  header; printf ' %bSMART CHECK%b\n' "$LAVENDER" "$RESET"; rule
-  printf ' OS: %s\n Kernel: %s\n Architecture: %s\n' "$(get_os)" "$(uname -r)" "$(uname -m)"
-  printf ' Virtualization: %s\n' "$(systemd-detect-virt 2>/dev/null || echo unknown)"
-  printf ' CPU threads: %s\n RAM: %s\n Disk: %s\n' "$(get_cpu)" "$(get_ram)" "$(get_disk)"
-  if is_cloud_shell; then warn 'Cloud Shell environment detected; persistence and inbound networking are limited.'; else ok 'No common Cloud Shell marker detected (this is not proof of public reachability).'; fi
-  if have systemctl; then
-    if systemctl is-system-running >/dev/null 2>&1; then ok 'systemd is running'; else warn 'systemctl exists but systemd is not fully running'; fi
-  else fail 'systemctl unavailable'; fi
-  if have docker; then
-    if docker info >/dev/null 2>&1; then ok 'Docker daemon responds'; else warn 'Docker CLI found; daemon unavailable or permission denied'; fi
-  else warn 'Docker is not installed'; fi
-  if have ip; then
-    printf '\n%bNETWORK INTERFACES%b\n' "$CYAN" "$RESET"
-    ip -brief address 2>/dev/null || true
-    printf '\n%bDEFAULT ROUTE%b\n' "$CYAN" "$RESET"
-    ip route show default 2>/dev/null || true
+  header
+  printf ' %bSMART CHECK%b\\n' "$LAVENDER" "$RESET"
+  rule
+  local script_dir
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$script_dir/preflight.sh" ]]; then
+    "$script_dir/preflight.sh" || true
+  elif [[ -f "$script_dir/preflight.sh" ]]; then
+    bash "$script_dir/preflight.sh" || true
+  else
+    fail 'preflight.sh is missing. Download the complete ONION HUB repository.'
   fi
-  printf '\n%bIMPORTANT%b Public outbound IP does not prove inbound port access. Test from an independent network.\n' "$YELLOW" "$RESET"
-  rule; pause
+  pause
 }
 show_tools(){
   header; printf ' %bVPS TOOLBOX%b\n' "$LAVENDER" "$RESET"; rule
