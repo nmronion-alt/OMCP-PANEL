@@ -6,13 +6,25 @@ OMCP_BRANCH="minecraft-panel-foundation"
 OMCP_HOME="/opt/omcp"
 OMCP_PANEL_DIR="$OMCP_HOME/panel"
 
-if [[ "\${EUID}" -ne 0 ]]; then
-  echo "Run as root: curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/\${OMCP_BRANCH}/panel/install.sh | sudo bash"
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Run as root: curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/${OMCP_BRANCH}/panel/install.sh | sudo bash"
   exit 1
 fi
 if ! command -v apt-get >/dev/null 2>&1; then
   echo "OMCP installer currently supports Ubuntu/Debian hosts with apt-get."
   exit 1
+fi
+
+# This development build uses Docker containers. Do not install Docker packages
+# blindly inside Cloud Shell/LXC-style environments where the daemon is blocked.
+if [[ ! -S /var/run/docker.sock ]]; then
+  echo "ERROR: This host has no accessible Docker daemon (/var/run/docker.sock)."
+  echo "The current OMCP backend requires Docker, but this environment appears to"
+  echo "run Minecraft directly inside a restricted container without systemd/Docker."
+  echo "Installing the Docker CLI or enabling docker.service cannot fix a missing host daemon."
+  echo "Do not continue with this Docker-based build. The next OMCP build must use"
+  echo "a native Java-process node agent (no Docker, no systemd dependency)."
+  exit 2
 fi
 
 echo "=============================================="
@@ -74,7 +86,7 @@ if [[ ! -f "$OMCP_PANEL_DIR/.env" ]]; then
   } > "$OMCP_PANEL_DIR/.env"
 else
   TOKEN="$(sed -n 's/^ADMIN_TOKEN=//p' "$OMCP_PANEL_DIR/.env" | head -n1)"
-  if [[ "\${#TOKEN}" -lt 32 ]]; then
+  if [[ "${#TOKEN}" -lt 32 ]]; then
     echo "Existing .env has an invalid ADMIN_TOKEN. Back it up and remove it, then rerun."
     exit 1
   fi
