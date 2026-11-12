@@ -615,6 +615,13 @@ def start_tunnel(sid, provider):
     if provider=="minekube": return enable_minekube(sid, "")
     if provider not in ("pinggy","bore"): raise ValueError("Unknown routing provider")
     if not server_running(sid): raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
+    ready=False
+    for _ in range(20):
+        try:
+            with socket.create_connection(("127.0.0.1",port),timeout=0.5): ready=True
+            break
+        except OSError: time.sleep(0.5)
+    if not ready: raise ValueError("Minecraft process exists, but port "+str(port)+" is not accepting TCP connections yet. Wait for the console to say Done, then retry.")
     if provider=="bore":
         bore=ensure_bore_binary()
         with TUNNEL_LOCK:
@@ -643,14 +650,6 @@ def start_tunnel(sid, provider):
         return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"\n".join(entry["lines"][-20:])}
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
-    port=int(meta.get("port",25565))
-    ready=False
-    for _ in range(20):
-        try:
-            with socket.create_connection(("127.0.0.1",port),timeout=0.5): ready=True
-            break
-        except OSError: time.sleep(0.5)
-    if not ready: raise ValueError("Minecraft process exists, but port "+str(port)+" is not accepting TCP connections yet. Wait for the console to say Done, then retry.")
     with TUNNEL_LOCK:
         old=TUNNELS.get(sid)
         if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
