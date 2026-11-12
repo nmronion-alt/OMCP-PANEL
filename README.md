@@ -10,7 +10,8 @@ OMCP is a standalone Minecraft Java server panel for Linux VPS hosts, including 
 - Three-step server wizard (Minecraft version, software, RAM/details); Paper, Vanilla and Fabric server downloads are currently implemented with official download APIs and explicit Minecraft EULA acknowledgement.
 - Forge, Spigot and Velocity are visible as planned choices but are not implemented yet.
 - Start, stop, restart, Minecraft console commands and recent log viewing.
-- Basic text file browser/editor, ZIP backups, server list and Linux memory/CPU-thread metrics.
+- Basic text file browser/editor, live ZIP backups, per-server scheduled Google Drive uploads, server list and Linux memory/CPU-thread metrics.
+- Minecraft TCP routing adapters for Pinggy and Bore.pub, plus Minekube Connect plugin installation for supported Paper/Spigot/Velocity-compatible servers.
 - Local API binds to `127.0.0.1:8765` by default.
 
 ## One-command installer (Ubuntu/Debian, systemd or no-systemd)
@@ -28,13 +29,13 @@ Or, after reviewing the script, run it directly:
 curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/main/install-omcp.sh | sudo bash
 ```
 
-The installer installs Python 3 and OpenJDK 21, creates a dedicated unprivileged `omcp` Linux account and downloads the agent/UI. On systemd VPS hosts it enables a systemd service; in Cloud Shell/container environments without systemd it starts a background process and writes its log to `/var/lib/omcp/agent.log`. Retrieve the first-run Admin Key with:
+The installer installs Python 3 and OpenJDK 21, creates a dedicated unprivileged `omcp` Linux account and downloads the agent/UI. Bore's official static binary is downloaded on first use for Linux x86_64 or ARM64 hosts. On systemd VPS hosts it enables a systemd service; in Cloud Shell/container environments without systemd it starts a background process and writes its log to `/var/lib/omcp/agent.log`. Retrieve the first-run Admin Key with:
 
 ```bash
 sudo journalctl -u omcp -n 80 --no-pager  # systemd VPS\nsudo cat /var/lib/omcp/agent.log          # no-systemd Cloud Shell/container
 ```
 
-Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listener. The Routing tab currently provides manual Cloudflare Tunnel instructions only; automatic tunnel lifecycle management is not implemented.
+Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listener. The panel web tunnel and Minecraft TCP routing are separate. Minecraft routing supports Pinggy and Bore.pub TCP relays. Minekube Connect is enabled by installing its official server/proxy plugin; restart the Minecraft server after installation and share the generated `*.play.minekube.net` address.
 
 ## Remote access / private-IP VPS
 
@@ -44,7 +45,7 @@ Cloudflare's ordinary web tunnel does not relay arbitrary Minecraft Java TCP tra
 
 ## MVP limitations
 
-Paper, Vanilla and Fabric creation are implemented; Paper uses PaperMC's current v3 downloads API. Other server software adapters are not implemented yet. Java 21 is installed by the Ubuntu/Debian installer. The MVP does not yet include Forge/Spigot/Velocity, plugin catalogue, live CPU percentage, delete/restore UI, automatic Cloudflare tunnel provisioning or TCP game-routing adapters. The Routing tab documents manual Cloudflare setup; it does not start a tunnel itself. Test on a disposable VPS and back up worlds before production use.
+Paper, Vanilla and Fabric creation are implemented; Paper uses PaperMC's current v3 downloads API. Other server software adapters are not implemented yet. Java 21 is installed by the Ubuntu/Debian installer. Cloud backups require the owner to configure Google OAuth credentials (Client ID, Client Secret and Refresh Token) in each server's Backups tab. The scheduler runs only while the OMCP agent is running and the Minecraft server is online. It briefly disables world saving, flushes saves, creates the ZIP, then re-enables saving before uploading. Google Drive uses resumable uploads for large archives. Test on a disposable VPS and back up worlds before production use.
 
 ## Source layout
 
