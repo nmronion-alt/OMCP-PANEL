@@ -92,7 +92,7 @@ def server_processes(sid):
         pid=int(entry.name)
         try:
             if Path(os.readlink(str(entry/"cwd"))).resolve()!=folder: continue
-            args=[x.decode(errors="replace") for x in (entry/"cmdline").read_bytes().split(b"\\0") if x]
+            args=[x.decode(errors="replace") for x in (entry/"cmdline").read_bytes().split(b"\0") if x]
             if "-jar" not in args: continue
             jar_arg=args[args.index("-jar")+1]
             if Path(jar_arg).resolve() not in expected: continue
@@ -269,7 +269,7 @@ def stop(sid):
     if not pids: return {"status":"stopped"}
     try:
         if tracked and p.stdin:
-            p.stdin.write(b"stop\\n"); p.stdin.flush()
+            p.stdin.write(b"stop\n"); p.stdin.flush()
             try: p.wait(timeout=45)
             except subprocess.TimeoutExpired: p.terminate()
         else:
