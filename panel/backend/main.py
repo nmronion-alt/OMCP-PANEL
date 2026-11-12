@@ -81,7 +81,7 @@ def server_action(server_id: str, action: str, _: bool = Depends(require_admin))
     client = docker_client()
     try:
         item = client.containers.get(server_id)
-        if "mc-panel" not in item.labels or item.labels.get("managed-by") != "mc-panel":
+        if item.labels.get("managed-by") != "mc-panel":
             raise HTTPException(status_code=404, detail="Managed server not found.")
         getattr(item, action)()
         item.reload()
