@@ -16,7 +16,7 @@ curl -fsSL "$REPO/index.html" -o "$APP/index.html"
 chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
 chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
 
-if [[ -d /run/systemd/system ]] && [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" == "systemd" ]] && command -v systemctl >/dev/null 2>&1; then
+if [[ -S /run/systemd/private ]] && [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" == "systemd" ]] && command -v systemctl >/dev/null 2>&1 && systemctl show-environment >/dev/null 2>&1; then
   cat >/etc/systemd/system/omcp.service <<'UNIT'
 [Unit]
 Description=OMCP Onion Minecraft Panel
