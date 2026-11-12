@@ -8,6 +8,13 @@ if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y python3 curl ca-certificates openjdk-21-jre-headless
+# Install cloudflared from Cloudflare's official Debian/Ubuntu repository.
+install -d --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
+chmod 0644 /usr/share/keyrings/cloudflare-main.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" >/etc/apt/sources.list.d/cloudflared.list
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y cloudflared
 id omcp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --create-home --shell /usr/sbin/nologin omcp
 install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
@@ -57,6 +64,28 @@ UNIT
   systemctl daemon-reload
   systemctl enable omcp
   if systemctl is-active --quiet omcp; then systemctl restart omcp; else systemctl start omcp; fi
+  cat >/etc/systemd/system/omcp-quick-tunnel.service <<'TUNNEL'
+[Unit]
+Description=OMCP temporary Cloudflare Quick Tunnel
+After=network-online.target omcp.service
+Wants=network-online.target
+[Service]
+Type=simple
+User=omcp
+Group=omcp
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+[Install]
+WantedBy=multi-user.target
+TUNNEL
+  systemctl daemon-reload
+  systemctl enable --now omcp-quick-tunnel.service
   sleep 2
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
@@ -79,12 +108,19 @@ else
     tail -n 60 "$DATA/agent.log" 2>/dev/null || true
     exit 1
   fi
-  echo "First-run Admin Key / startup log: sudo cat $DATA/agent.log"
+  echo "First-run Admin setup / startup log: sudo cat $DATA/agent.log"
+  if command -v cloudflared >/dev/null 2>&1; then
+    if [[ -f "$DATA/cloudflared.pid" ]] && kill -0 "$(cat "$DATA/cloudflared.pid")" 2>/dev/null; then kill "$(cat "$DATA/cloudflared.pid")" 2>/dev/null || true; fi
+    runuser -u omcp -- sh -c 'nohup /usr/bin/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765 </dev/null >>/var/lib/omcp/cloudflared.log 2>&1 & echo $! >/var/lib/omcp/cloudflared.pid'
+    sleep 3
+    echo "Cloudflare Quick Tunnel log: sudo tail -n 40 $DATA/cloudflared.log"
+  fi
   echo "Stop this no-systemd process: sudo kill \$(cat $DATA/agent.pid)"
 fi
 echo
 echo "OMCP panel listener: http://127.0.0.1:8765"
-echo "API is bound to localhost only. For a public VPS, put Cloudflare Access in front of a Cloudflare Tunnel."
+echo "Panel is bound to localhost. A temporary Cloudflare Quick Tunnel is started when cloudflared is available."
 echo "OpenJDK 21 was installed. Verify with: java -version"
 echo "Cloud Shell sessions are temporary; processes and files may be lost when the session ends."
+echo "Quick Tunnel URLs are temporary. For a permanent hostname, configure a named Cloudflare Tunnel and Cloudflare Access." 
 echo "No Minecraft TCP relay is configured by this installer."
