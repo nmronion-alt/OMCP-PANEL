@@ -122,7 +122,7 @@ def start(sid):
     java=shutil.which("java")
     if not java: raise ValueError("Java not installed")
     log=(folder/"console.log").open("ab",buffering=0)
-    p=subprocess.Popen([java,f"-Xms1G",f"-Xmx{m['memory']}G","-jar","server.jar","nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    p=subprocess.Popen([java,f"-Xms1G",f"-Xmx{m['memory']}G","-jar",("server.jar" if (folder/"server.jar").exists() else "paper.jar"),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     PROCS[sid]=p
     return {"status":"starting","pid":p.pid}
 
