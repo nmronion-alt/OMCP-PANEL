@@ -1087,6 +1087,7 @@ class Handler(BaseHTTPRequestHandler):
                 if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
                 return send(self,200,stop_tunnel(sid))
             if path=="/api/backups/google/config":
+                if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required to change cloud credentials"})
                 cfg=load_backup_config(); drive=cfg.setdefault("google_drive",{})
                 for key in ("client_id","client_secret","refresh_token","folder_id"):
                     value=str(d.get(key,"")).strip()
