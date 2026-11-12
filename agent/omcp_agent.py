@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time, socket, posixpath, stat, errno
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time, socket, posixpath, stat, errno, tarfile, platform
 try:
     import paramiko
 except ImportError:
@@ -18,7 +18,7 @@ SESSIONS={}
 SESSION_LOCK=threading.RLock()
 SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
-TUNNELS={}; TUNNEL_LOCK=threading.RLock(); METRIC_PREV={}
+TUNNELS={}; TUNNEL_LOCK=threading.RLock(); METRIC_PREV={}; MINEKUBE_STATE={}
 
 def load_users():
     if not USERSFILE.exists(): return {}
@@ -536,10 +536,105 @@ def stop(sid):
         if isinstance(e,ValueError): raise
         raise ValueError("Could not stop Minecraft cleanly: "+str(e))
 
+def ensure_bore_binary():
+    """Download the official static Bore release for supported Linux VPS architectures."""
+    target=ROOT/"bin"/"bore"
+    if target.is_file() and os.access(target,os.X_OK): return str(target)
+    machine=platform.machine().lower()
+    arch={"x86_64":"x86_64-unknown-linux-musl","amd64":"x86_64-unknown-linux-musl","aarch64":"aarch64-unknown-linux-musl","arm64":"aarch64-unknown-linux-musl"}.get(machine)
+    if not arch: raise ValueError("Bore auto-install currently supports Linux x86_64 and ARM64 VPS hosts.")
+    req=urllib.request.Request("https://api.github.com/repos/ekzhang/bore/releases/latest",headers={"User-Agent":"OMCP/0.8","Accept":"application/vnd.github+json"})
+    with urllib.request.urlopen(req,timeout=30) as r: release=json.load(r)
+    tag=str(release.get("tag_name","")).lstrip("v")
+    asset=next((x for x in release.get("assets",[]) if x.get("name")==("bore-v"+tag+"-"+arch+".tar.gz")),None)
+    if not asset: raise ValueError("Official Bore release has no binary for "+machine)
+    with urllib.request.urlopen(asset["browser_download_url"],timeout=90) as r: archive=r.read()
+    import io
+    with tarfile.open(fileobj=io.BytesIO(archive),mode="r:gz") as tar:
+        member=next((m for m in tar.getmembers() if m.isfile() and posixpath.basename(m.name)=="bore"),None)
+        if not member: raise ValueError("Bore release archive did not contain its executable")
+        stream=tar.extractfile(member)
+        if not stream: raise ValueError("Could not read Bore executable from release archive")
+        binary=stream.read()
+    target.parent.mkdir(parents=True,exist_ok=True)
+    temp=target.with_suffix(".new"); temp.write_bytes(binary); os.chmod(temp,0o755); os.replace(temp,target)
+    return str(target)
+
+def enable_minekube(sid, endpoint=""):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    software=str(meta.get("software","paper")).lower()
+    asset_name={"paper":"connect-spigot.jar","purpur":"connect-spigot.jar","folia":"connect-spigot.jar","spigot":"connect-spigot.jar","velocity":"connect-velocity.jar","waterfall":"connect-bungee.jar"}.get(software)
+    if not asset_name: raise ValueError("Minekube Connect plugin supports Paper, Purpur, Folia, Spigot, Velocity and Bungee-compatible proxy software only.")
+    endpoint=str(endpoint or "").strip().lower()
+    if endpoint and not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,31}",endpoint): raise ValueError("Endpoint must be 2-32 lowercase letters, numbers or hyphens.")
+    req=urllib.request.Request("https://api.github.com/repos/minekube/connect-java/releases/latest",headers={"User-Agent":"OMCP/0.8","Accept":"application/vnd.github+json"})
+    with urllib.request.urlopen(req,timeout=30) as r: release=json.load(r)
+    asset=next((x for x in release.get("assets",[]) if x.get("name")==asset_name),None)
+    if not asset: raise ValueError("Official Minekube release is missing "+asset_name)
+    plugins=folder/"plugins"; plugins.mkdir(exist_ok=True)
+    jar=plugins/asset_name
+    with urllib.request.urlopen(asset["browser_download_url"],timeout=90) as r, jar.open("wb") as out: shutil.copyfileobj(r,out)
+    if jar.stat().st_size<100000 or not zipfile.is_zipfile(jar):
+        jar.unlink(missing_ok=True); raise ValueError("Downloaded Minekube plugin failed archive validation.")
+    if software in ("paper","purpur","folia","spigot"):
+        props=folder/"server.properties"
+        raw=props.read_text(errors="replace") if props.exists() else ""
+        if re.search(r"(?m)^enforce-secure-profile=",raw):
+            raw=re.sub(r"(?m)^enforce-secure-profile=.*$","enforce-secure-profile=false",raw)
+        else: raw+="\nenforce-secure-profile=false\n"
+        props.write_text(raw)
+    if endpoint:
+        cfg=plugins/"connect"/"config.yml"; cfg.parent.mkdir(parents=True,exist_ok=True)
+        existing=cfg.read_text(errors="replace") if cfg.exists() else ""
+        if re.search(r"(?m)^endpoint:",existing): existing=re.sub(r"(?m)^endpoint:.*$", "endpoint: "+endpoint, existing)
+        else: existing=existing.rstrip()+"\nendpoint: "+endpoint+"\n"
+        cfg.write_text(existing)
+    MINEKUBE_STATE[sid]={"installed":True,"endpoint":endpoint,"version":release.get("tag_name","latest"),"installed_at":int(time.time())}
+    return minekube_info(sid)
+
+def minekube_info(sid):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    software=str(meta.get("software","paper")).lower()
+    plugin=folder/"plugins"/({"velocity":"connect-velocity.jar","waterfall":"connect-bungee.jar"}.get(software,"connect-spigot.jar"))
+    state=MINEKUBE_STATE.get(sid,{})
+    logs=folder/"console.log"
+    raw=logs.read_text(errors="replace")[-100000:] if logs.exists() else ""
+    match=re.search(r"(?:Your public address|Public address|Endpoint address):\\s*([a-z0-9-]+\\.play\\.minekube\\.net)",raw,re.I)
+    address=match.group(1) if match else ((state.get("endpoint") or "")+".play.minekube.net" if state.get("endpoint") else None)
+    installed=plugin.is_file()
+    return {"status":"running" if address and server_running(sid) else ("installed" if installed else "stopped"),"provider":"minekube","address":address,"installed":installed,"restartRequired":installed and not bool(address) and not server_running(sid),"logs":raw[-5000:] if raw else "Install the Connect plugin, then start/restart this server. Minekube will print its public address in the console."}
+
 def start_tunnel(sid, provider):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-    if provider!="pinggy": raise ValueError("Bore and Minekube need provider-specific setup/credentials and are not enabled yet. Select Pinggy for the available adapter.")
+    if provider=="minekube": return enable_minekube(sid, "")
+    if provider not in ("pinggy","bore"): raise ValueError("Unknown routing provider")
     if not server_running(sid): raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
+    if provider=="bore":
+        bore=ensure_bore_binary()
+        with TUNNEL_LOCK:
+            old=TUNNELS.get(sid)
+            if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
+            proc=subprocess.Popen([bore,"local",str(port),"--to","bore.pub"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True)
+            entry={"proc":proc,"provider":"bore","lines":[],"address":None,"started":int(time.time())}; TUNNELS[sid]=entry
+        def collect_bore():
+            try:
+                for line in proc.stdout:
+                    line=line.rstrip()
+                    with TUNNEL_LOCK:
+                        entry["lines"].append(line); entry["lines"]=entry["lines"][-80:]
+                        match=re.search(r"(?:bore\\.pub:|listening at\\s+)(?:tcp://)?(?:bore\\.pub:)?(\\d{2,5})",line,re.I)
+                        if match: entry["address"]="bore.pub:"+match.group(1)
+            except Exception as e:
+                with TUNNEL_LOCK: entry["lines"].append("Bore output error: "+str(e))
+        threading.Thread(target=collect_bore,daemon=True).start()
+        deadline=time.time()+25
+        while time.time()<deadline:
+            if entry.get("address"): return {"status":"running","provider":"bore","port":port,"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
+            if proc.poll() is not None:
+                time.sleep(0.2); detail="\\n".join(entry["lines"][-30:]) or "Bore exited without returning a port."
+                raise ValueError("Bore tunnel exited (code "+str(proc.returncode)+"). "+detail[-1600:])
+            time.sleep(0.2)
+        return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"\\n".join(entry["lines"][-20:])}
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
     port=int(meta.get("port",25565))
@@ -582,6 +677,7 @@ def start_tunnel(sid, provider):
     return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
 
 def tunnel_info(sid):
+    if MINEKUBE_STATE.get(sid) or (safe_dir(sid)/"plugins"/"connect-spigot.jar").exists() or (safe_dir(sid)/"plugins"/"connect-velocity.jar").exists() or (safe_dir(sid)/"plugins"/"connect-bungee.jar").exists(): return minekube_info(sid)
     with TUNNEL_LOCK:
         entry=TUNNELS.get(sid)
         if not entry: return {"status":"stopped","provider":None,"address":None,"logs":""}
@@ -593,6 +689,7 @@ def stop_tunnel(sid):
     with TUNNEL_LOCK:
         entry=TUNNELS.get(sid)
         if not entry: return {"status":"stopped"}
+        if entry.get("provider")=="minekube": return {"status":"installed","provider":"minekube","address":minekube_info(sid).get("address"),"logs":"Minekube is managed by the server plugin. Stop the Minecraft server to disconnect it."}
         p=entry["proc"]
         if p.poll() is None:
             p.terminate()
@@ -868,6 +965,8 @@ class Handler(BaseHTTPRequestHandler):
                 if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
                 return send(self,200,stop_tunnel(sid))
             if path=="/api/servers": return send(self,201,{"server":create(d)})
+            mx=re.fullmatch(r"/api/servers/([a-f0-9]{8})/minekube/install",path)
+            if mx: return send(self,200,enable_minekube(mx.group(1),str(d.get("endpoint",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp/reset",path)
             if x: return send(self,200,reset_sftp_password(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
