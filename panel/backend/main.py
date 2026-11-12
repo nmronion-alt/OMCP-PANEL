@@ -203,6 +203,8 @@ def write_file(server_id:str,path:str,payload:FileWrite,_:bool=Depends(require_a
 @app.post("/api/servers/{server_id}/upload")
 async def upload_file(server_id:str,path:str="",file:UploadFile=File(...),_:bool=Depends(require_admin)):
     directory=server_dir(server_id); folder=resolve_file(directory,path) if path else directory
+    if not folder.exists():
+        folder.mkdir(parents=True,exist_ok=True)
     if not folder.is_dir(): raise HTTPException(404,"Upload directory not found.")
     filename=Path(file.filename or "").name
     if not filename or filename in {".",".."} or filename=="omcp.json": raise HTTPException(400,"Invalid upload filename.")
