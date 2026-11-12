@@ -1,0 +1,33 @@
+name: Validate OMCP
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compile Python agent
+        run: python -m py_compile agent/omcp_agent.py
+      - name: Extract and check panel JavaScript
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path("index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>([\\s\\S]*?)</script>", html)
+          if not scripts:
+              raise SystemExit("No inline script found")
+          Path("/tmp/omcp-panel.js").write_text("\\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/omcp-panel.js
