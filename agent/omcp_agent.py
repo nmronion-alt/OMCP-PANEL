@@ -238,7 +238,7 @@ def start_tunnel(sid, provider):
         askpass=ROOT/"pinggy-askpass.sh"
         askpass.write_text("#!/bin/sh\nprintf '\\n'\n"); os.chmod(askpass,0o700)
         env=os.environ.copy(); env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
-        cmd=[ssh,"-p","443","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password,keyboard-interactive","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:localhost:"+str(meta["port"]),"tcp@free.pinggy.io"]
+        cmd=[ssh,"-T","-p","443","-o","ConnectTimeout=20","-o","ConnectionAttempts=2","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=keyboard-interactive,password","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=20","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(meta["port"]),"tcp@free.pinggy.io"]
         proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
         entry={"proc":proc,"provider":"pinggy","lines":[],"address":None,"started":int(time.time())}; TUNNELS[sid]=entry
     def collect():
@@ -322,8 +322,12 @@ def install_plugin(sid, project_id, source="modrinth"):
         if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.jar",filename): raise ValueError("Unsafe plugin filename")
         dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
         if target.exists(): raise ValueError("A plugin with this filename is already installed")
-        target.write_bytes(raw)
-        return {"installed":filename,"source":"spiget","restartRequired":True}
+        tmp=target.with_name(target.name+".omcp-tmp")
+        try:
+            tmp.write_bytes(raw); os.replace(tmp,target)
+        finally:
+            if tmp.exists(): tmp.unlink()
+        return {"installed":filename,"path":"plugins/"+filename,"source":"spiget","restartRequired":True}
     if source!="modrinth": raise ValueError("Unknown plugin catalogue")
     if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid plugin project ID")
     req=urllib.request.Request("https://api.modrinth.com/v2/project/"+project_id+"/version",headers={"User-Agent":"OMCP/0.6 (https://github.com/nmronion-alt/onion-hub)"})
@@ -340,8 +344,12 @@ def install_plugin(sid, project_id, source="modrinth"):
     if len(raw)>50*1024*1024 or not zipfile.is_zipfile(__import__("io").BytesIO(raw)): raise ValueError("Downloaded plugin JAR failed validation or exceeds 50 MB")
     dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
     if target.exists(): raise ValueError("A plugin with this filename is already installed")
-    target.write_bytes(raw)
-    return {"installed":filename,"version":chosen.get("version_number"),"restartRequired":True}
+    tmp=target.with_name(target.name+".omcp-tmp")
+    try:
+        tmp.write_bytes(raw); os.replace(tmp,target)
+    finally:
+        if tmp.exists(): tmp.unlink()
+    return {"installed":filename,"path":"plugins/"+filename,"version":chosen.get("version_number"),"restartRequired":True}
 
 def server_metrics(sid):
     folder=safe_dir(sid); proc=PROCS.get(sid)
