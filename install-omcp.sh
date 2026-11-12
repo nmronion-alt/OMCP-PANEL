@@ -7,11 +7,14 @@ DATA="/var/lib/omcp"
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y python3 curl ca-certificates openjdk-21-jre-headless openssh-client
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko curl ca-certificates openjdk-21-jre-headless openssh-client
 # Install Java 25 when the configured Ubuntu/Debian repositories provide it; Java 21 remains the baseline.
 if apt-cache show openjdk-25-jre-headless >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-25-jre-headless
 fi
+# Open the dedicated SFTP listener in UFW when UFW is already active. Cloud firewalls need a separate rule.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then ufw allow 2022/tcp; fi
+
 # tunnl.gg uses the system OpenSSH client and does not require a Cloudflare account.
 id omcp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --create-home --shell /usr/sbin/nologin omcp
 install -d -o root -g omcp -m 0750 "$APP"
