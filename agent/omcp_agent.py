@@ -563,8 +563,8 @@ def ensure_bore_binary():
 def enable_minekube(sid, endpoint=""):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     software=str(meta.get("software","paper")).lower()
-    asset_name={"paper":"connect-spigot.jar","purpur":"connect-spigot.jar","folia":"connect-spigot.jar","spigot":"connect-spigot.jar","velocity":"connect-velocity.jar","waterfall":"connect-bungee.jar"}.get(software)
-    if not asset_name: raise ValueError("Minekube Connect plugin supports Paper, Purpur, Folia, Spigot, Velocity and Bungee-compatible proxy software only.")
+    asset_name={"paper":"connect-spigot.jar","purpur":"connect-spigot.jar","spigot":"connect-spigot.jar","velocity":"connect-velocity.jar"}.get(software)
+    if not asset_name: raise ValueError("Minekube Connect plugin is enabled for Paper, Purpur, Spigot and Velocity. Folia and Waterfall compatibility is not assumed.")
     endpoint=str(endpoint or "").strip().lower()
     if endpoint and not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,31}",endpoint): raise ValueError("Endpoint must be 2-32 lowercase letters, numbers or hyphens.")
     req=urllib.request.Request("https://api.github.com/repos/minekube/connect-java/releases/latest",headers={"User-Agent":"OMCP/0.8","Accept":"application/vnd.github+json"})
