@@ -275,8 +275,8 @@ def plugin_search(query):
         with urllib.request.urlopen(req,timeout=18) as r: data=json.load(r)
         for x in data.get("hits",[]):
             results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"downloads":x.get("downloads",0),"source":"modrinth"})
-    except Exception as e:
-        if not query: raise ValueError("Modrinth catalogue unavailable: "+str(e))
+    except Exception:
+        pass
     try:
         endpoint=("https://api.spiget.org/v2/search/resources/"+quote(query,safe="") if query else "https://api.spiget.org/v2/resources")
         endpoint+=("?size=8&field=name&sort=-downloads" if query else "?size=8&sort=-downloads")
