@@ -17,10 +17,17 @@ chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
 chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
 
 SYSTEMD_STATE=""
+SYSTEMD_OK=0
 if command -v systemctl >/dev/null 2>&1; then
   SYSTEMD_STATE="$(systemctl is-system-running 2>/dev/null || true)"
+  # Do not trust the mere presence of systemctl or /run/systemd files.
+  # PID 1 must actually be systemd and the manager bus must answer.
+  PID1_EXE="$(readlink -f /proc/1/exe 2>/dev/null || true)"
+  if [[ "$PID1_EXE" == *systemd* ]] && systemctl is-active --quiet default.target 2>/dev/null; then
+    SYSTEMD_OK=1
+  fi
 fi
-if [[ -d /run/systemd/system ]] && [[ -S /run/systemd/private ]] && command -v systemctl >/dev/null 2>&1 && systemctl show-environment >/dev/null 2>&1 && { [[ "$SYSTEMD_STATE" == "running" ]] || [[ "$SYSTEMD_STATE" == "degraded" ]]; }; then
+if [[ "$SYSTEMD_OK" == "1" ]]; then
   cat >/etc/systemd/system/omcp.service <<'UNIT'
 [Unit]
 Description=OMCP Onion Minecraft Panel
