@@ -55,11 +55,11 @@ case "$DOCKER_FS" in
   overlay|tmpfs|ramfs)
     echo "WARNING: Docker storage appears to use $DOCKER_FS."
     echo "This can be temporary. Your Minecraft worlds may disappear when this environment resets."
-    if [[ -t 0 ]]; then
-      read -r -p "Continue anyway? [y/N] " answer
+    if [[ -r /dev/tty ]]; then
+      read -r -p "Continue anyway? [y/N] " answer </dev/tty
       [[ "$answer" =~ ^[Yy]$ ]] || exit 1
     else
-      echo "Non-interactive install stopped to protect your server data."
+      echo "No interactive terminal available; install stopped to protect your server data."
       exit 1
     fi
     ;;
