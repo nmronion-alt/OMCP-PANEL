@@ -17,7 +17,7 @@ FRONTEND_DIR = BASE_DIR.parent / "frontend"
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 MC_IMAGE = "itzg/minecraft-server:latest"
 SERVER_TYPES = {"VANILLA", "PAPER", "PURPUR", "FABRIC", "FORGE", "NEOFORGE"}
-VERSION_PATTERN = re.compile(r"^(LATEST|SNAPSHOT|[1-9][0-9]?\\.[0-9]+(?:\\.[0-9]+)?)$")
+VERSION_PATTERN = re.compile(r"^(LATEST|SNAPSHOT|[1-9][0-9]?\.[0-9]+(?:\.[0-9]+)?)$")
 
 app = FastAPI(title="OMCP - Onion Minecraft Panel", docs_url=None, redoc_url=None)
 
