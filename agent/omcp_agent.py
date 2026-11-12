@@ -446,7 +446,8 @@ def start(sid):
     fifo_path=folder/"console.stdin"
     if fifo_path.exists() and not fifo_path.is_fifo(): fifo_path.unlink()
     if not fifo_path.exists(): os.mkfifo(fifo_path,0o600)
-    fifo_fd=os.open(fifo_path,os.O_RDWR|os.O_NONBLOCK)
+    # Keep the JVM stdin descriptor blocking; Java console readers can exit on EAGAIN otherwise.
+    fifo_fd=os.open(fifo_path,os.O_RDWR)
     try:
         with log_path.open("wb",buffering=0) as log:
             log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | JAR: "+jar.name+"\n").encode())
