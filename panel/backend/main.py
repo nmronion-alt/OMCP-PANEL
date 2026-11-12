@@ -47,8 +47,13 @@ def metadata(directory:Path)->dict:
     except (OSError,ValueError): raise HTTPException(500,"Server metadata is missing or damaged.")
 def save_meta(directory:Path,data:dict):
     temp=directory/"omcp.json.tmp"; temp.write_text(json.dumps(data,indent=2)); temp.replace(directory/"omcp.json")
-def allocate_port()->int:
-    with socket.socket() as sock: sock.bind(("127.0.0.1",0)); return int(sock.getsockname()[1])
+def allocate_port(exclude:set[int]|None=None)->int:
+    excluded=exclude or set()
+    for _ in range(20):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1",0)); port=int(sock.getsockname()[1])
+        if port not in excluded: return port
+    raise RuntimeError("Could not allocate a unique local port.")
 def is_running(directory:Path,meta:dict)->bool:
     pid=meta.get("pid")
     if not isinstance(pid,int) or pid<2: return False
@@ -130,7 +135,7 @@ def create_server(payload:ServerCreate,_:bool=Depends(require_admin)):
     target.mkdir(mode=0o750)
     try:
         info=paper_download(version,target/"server.jar")
-        meta={"name":name,"version":version,"server_type":"PAPER","memory_gb":payload.memory_gb,"port":allocate_port(),"rcon_port":allocate_port(),"rcon_password":secrets.token_urlsafe(24),"pid":None,"created_at":int(time.time()),"software_info":info}
+        meta={"name":name,"version":version,"server_type":"PAPER","memory_gb":payload.memory_gb,"port":(port:=allocate_port()),"rcon_port":allocate_port({port}),"rcon_password":secrets.token_urlsafe(24),"pid":None,"created_at":int(time.time()),"software_info":info}
         save_meta(target,meta); (target/"eula.txt").write_text("eula=true\n"); configure_properties(target,meta)
         return {"id":slug,"name":name,"status":"stopped","target":f"127.0.0.1:{meta['port']}","message":f"{info} downloaded. Start the server when ready."}
     except Exception: shutil.rmtree(target,ignore_errors=True); raise
