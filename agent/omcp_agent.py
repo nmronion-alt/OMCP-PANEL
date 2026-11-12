@@ -245,6 +245,38 @@ def stop_tunnel(sid):
             except subprocess.TimeoutExpired: p.kill()
         return {"status":"stopped"}
 
+def plugin_search(query):
+    query=str(query or "").strip()
+    if not query or len(query)>100: raise ValueError("Enter a plugin name to search")
+    facets='[["project_type:plugin"],["categories:paper"]]'
+    url="https://api.modrinth.com/v2/search?query="+quote(query)+"&limit=12&facets="+quote(facets)
+    req=urllib.request.Request(url,headers={"User-Agent":"OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)"})
+    with urllib.request.urlopen(req,timeout=20) as r: data=json.load(r)
+    return {"plugins":[{"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"downloads":x.get("downloads",0)} for x in data.get("hits",[])]}
+
+def install_plugin(sid, project_id):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    if meta.get("software","paper")!="paper": raise ValueError("The plugin installer currently supports Paper servers only.")
+    proc=PROCS.get(sid)
+    if proc and proc.poll() is None: raise ValueError("Stop the server before installing a plugin.")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid plugin project ID")
+    req=urllib.request.Request("https://api.modrinth.com/v2/project/"+project_id+"/version",headers={"User-Agent":"OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)"})
+    with urllib.request.urlopen(req,timeout=20) as r: versions=json.load(r)
+    compatible=[v for v in versions if meta["version"] in v.get("game_versions",[]) and any(x.lower() in ("paper","spigot","purpur","folia") for x in v.get("loaders",[]))]
+    if not compatible: raise ValueError("No Paper-compatible release found for Minecraft "+meta["version"])
+    compatible.sort(key=lambda v:v.get("date_published",""),reverse=True)
+    chosen=compatible[0]; files=chosen.get("files",[])
+    file=next((x for x in files if x.get("primary")),files[0] if files else None)
+    if not file: raise ValueError("Plugin release has no downloadable file")
+    filename=Path(file.get("filename","")).name
+    if not filename.lower().endswith(".jar") or not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.jar",filename): raise ValueError("Plugin download is not a valid JAR filename")
+    with urllib.request.urlopen(urllib.request.Request(file["url"],headers={"User-Agent":"OMCP/0.5"}),timeout=60) as r: raw=r.read(50*1024*1024+1)
+    if len(raw)>50*1024*1024 or not zipfile.is_zipfile(__import__("io").BytesIO(raw)): raise ValueError("Downloaded plugin JAR failed validation or exceeds 50 MB")
+    dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
+    if target.exists(): raise ValueError("A plugin with this filename is already installed")
+    target.write_bytes(raw)
+    return {"installed":filename,"version":chosen.get("version_number"),"restartRequired":True}
+
 def server_metrics(sid):
     folder=safe_dir(sid); proc=PROCS.get(sid)
     running=bool(proc and proc.poll() is None)
@@ -342,6 +374,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition",'attachment; filename="'+f.name+'"')
                 self.send_header("Content-Length",str(len(raw))); self.send_header("Cache-Control","no-store")
                 self.end_headers(); self.wfile.write(raw); return
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/search",path)
+            if x:
+                sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
+                if meta.get("software","paper")!="paper": raise ValueError("Plugin installer currently supports Paper servers only")
+                q=parse_qs(urlparse(self.path).query).get("q",[""])[0]
+                return send(self,200,plugin_search(q))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
             if x:
                 folder=safe_dir(x.group(1)); rel=self.headers.get("X-OMCP-Path","")
@@ -400,6 +438,8 @@ class Handler(BaseHTTPRequestHandler):
                 if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
                 return send(self,200,stop_tunnel(sid))
             if path=="/api/servers": return send(self,201,{"server":create(d)})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
+            if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/upgrade",path)
             if x:
                 result=upgrade_server(x.group(1),str(d.get("version","")).strip())
