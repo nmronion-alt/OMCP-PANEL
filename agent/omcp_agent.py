@@ -288,7 +288,7 @@ def physical_ram_gb():
 def create(d):
     name=str(d.get('name','')).strip(); ver=str(d.get('version','')).strip(); software=str(d.get('software','paper')).lower()
     mem=int(d.get('memory',2)); port=int(d.get('port',25565))
-    supported=('paper','purpur','folia','velocity','waterfall','fabric','vanilla')
+    supported=('paper','purpur','folia','spigot','velocity','waterfall','fabric','vanilla')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
     if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?',ver): raise ValueError('Invalid Minecraft or proxy software version')
     if software not in supported: raise ValueError('Unsupported software. Choose Paper, Purpur, Folia, Velocity, Waterfall, Fabric or Vanilla.')
@@ -328,6 +328,19 @@ def download_server_jar(software, ver, destination):
         installer=next((x['version'] for x in installers if x.get('stable')),None)
         if not loader or not installer: raise ValueError('No stable Fabric loader found for '+ver)
         url='https://meta.fabricmc.net/v2/versions/loader/'+ver+'/'+loader+'/'+installer+'/server/jar'
+    elif software=='spigot':
+        if not shutil.which('git'): raise ValueError('Git is required to build Spigot. Re-run the OMCP installer to install Git.')
+        build_dir=destination.parent/('buildtools-'+secrets.token_hex(4)); build_dir.mkdir(parents=True,exist_ok=True)
+        try:
+            buildtools=build_dir/'BuildTools.jar'
+            build_url='https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar'
+            with urllib.request.urlopen(urllib.request.Request(build_url,headers=headers),timeout=60) as r, buildtools.open('wb') as out: shutil.copyfileobj(r,out)
+            java=shutil.which('java')
+            result=subprocess.run([java,'-jar',str(buildtools),'--rev',ver],cwd=build_dir,capture_output=True,text=True,timeout=900)
+            built=build_dir/('spigot-'+ver+'.jar')
+            if result.returncode!=0 or not built.is_file(): raise ValueError('Spigot BuildTools failed: '+(result.stderr or result.stdout or 'Build did not produce a Spigot JAR')[-1800:])
+            shutil.copy2(built,destination)
+        finally: shutil.rmtree(build_dir,ignore_errors=True)
     elif software=='vanilla':
         with urllib.request.urlopen(urllib.request.Request('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json',headers=headers),timeout=30) as r: manifest=json.load(r)
         item=next((x for x in manifest['versions'] if x['id']==ver and x['type']=='release'),None)
@@ -345,7 +358,7 @@ def download_server_jar(software, ver, destination):
 VERSION_CACHE={}
 def software_versions(software):
     software=str(software or '').lower()
-    if software not in ('paper','purpur','folia','velocity','waterfall','fabric','vanilla'): raise ValueError('Unsupported server software')
+    if software not in ('paper','purpur','folia','spigot','velocity','waterfall','fabric','vanilla'): raise ValueError('Unsupported server software')
     cached=VERSION_CACHE.get(software)
     if cached and time.time()-cached[0]<300: return cached[1]
     headers={'User-Agent':'OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)','Accept':'application/json'}
@@ -370,7 +383,7 @@ def upgrade_server(sid, ver, software=None):
     if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?",ver): raise ValueError("Invalid Minecraft or proxy software version")
     if server_running(sid): raise ValueError("Stop the server before changing its version")
     software=str(software or meta.get("software","paper")).lower()
-    if software not in ("paper","purpur","folia","velocity","waterfall","fabric","vanilla"): raise ValueError("Unsupported server software")
+    if software not in ("paper","purpur","folia","spigot","velocity","waterfall","fabric","vanilla"): raise ValueError("Unsupported server software")
     dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
     backup=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
     with zipfile.ZipFile(backup,"w",zipfile.ZIP_DEFLATED) as z:
@@ -593,7 +606,7 @@ def plugin_search(query):
 
 def install_plugin(sid, project_id, source="modrinth"):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-    if meta.get("software","paper")!="paper": raise ValueError("The plugin installer currently supports Paper servers only.")
+    if meta.get("software","paper") not in ("paper","purpur","folia","spigot"): raise ValueError("The plugin installer supports Paper, Purpur, Folia and Spigot game servers only.")
     # Plugin JARs can be placed while online; Paper loads them on next restart.
     if source=="spiget":
         if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID")
@@ -754,7 +767,7 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/search",path)
             if x:
                 sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-                if meta.get("software","paper") not in ("paper","purpur","folia"): raise ValueError("Plugin installation is available for Paper, Purpur and Folia game servers only")
+                if meta.get("software","paper") not in ("paper","purpur","folia","spigot"): raise ValueError("Plugin installation is available for Paper, Purpur, Folia and Spigot game servers only")
                 q=parse_qs(urlparse(self.path).query).get("q",[""])[0]
                 return send(self,200,plugin_search(q))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/download",path)
