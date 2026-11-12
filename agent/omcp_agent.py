@@ -290,7 +290,7 @@ def create(d):
     mem=int(d.get('memory',2)); port=int(d.get('port',25565))
     supported=('paper','purpur','folia','velocity','waterfall','fabric','vanilla')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
-    if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?',ver): raise ValueError('Invalid Minecraft version')
+    if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?',ver): raise ValueError('Invalid Minecraft or proxy software version')
     if software not in supported: raise ValueError('Unsupported software. Choose Paper, Purpur, Folia, Velocity, Waterfall, Fabric or Vanilla.')
     if not 1<=mem<=physical_ram_gb() or not 1024<=port<=65535: raise ValueError('RAM must be between 1 GB and host RAM; port 1024-65535')
     if not d.get('eulaAccepted'): raise ValueError('Accept the Minecraft EULA first')
@@ -367,7 +367,7 @@ def software_versions(software):
 
 def upgrade_server(sid, ver, software=None):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-    if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?",ver): raise ValueError("Invalid Minecraft version")
+    if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?",ver): raise ValueError("Invalid Minecraft or proxy software version")
     if server_running(sid): raise ValueError("Stop the server before changing its version")
     software=str(software or meta.get("software","paper")).lower()
     if software not in ("paper","purpur","folia","velocity","waterfall","fabric","vanilla"): raise ValueError("Unsupported server software")
@@ -409,6 +409,21 @@ def start(sid):
         existing=server_processes(sid)
         if existing: raise ValueError("Minecraft is already running for this server (PID "+", ".join(map(str,existing))+"). Stop it first; OMCP detected the live process even after an agent restart.")
     java=m.get("javaPath") or shutil.which("java")
+    software=str(m.get("software","paper")); ver=str(m.get("version",""))
+    first=re.match(r"(\d+)",ver)
+    major=int(first.group(1)) if first else 0
+    needs_java25=(major>=26) or (software=="velocity" and major>=4)
+    if needs_java25:
+        candidates=[m["javaPath"]] if m.get("javaPath") else [x["path"] for x in java_runtimes() if x["label"].startswith("Java 25 ")]
+        java25=None
+        for candidate in candidates:
+            try:
+                output=subprocess.run([candidate,"-version"],capture_output=True,text=True,timeout=5).stderr
+                match=re.search(r"version .*?(\d+)",output)
+                if match and int(match.group(1))>=25: java25=candidate; break
+            except Exception: pass
+        if not java25: raise ValueError("This software version requires Java 25 or newer. Install/select Java 25 in Server Settings, then start again.")
+        java=java25
     if not java or not os.path.isfile(java) or not os.access(java,os.X_OK): raise ValueError("Selected Java runtime is missing or not executable. Choose a valid Java runtime in Server Settings.")
     jar=folder/("server.jar" if (folder/"server.jar").is_file() else "paper.jar")
     if not jar.is_file() or jar.stat().st_size<100000: raise ValueError("Server JAR is missing or incomplete. Check the server files or use Reinstall server.")
