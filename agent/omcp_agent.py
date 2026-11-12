@@ -309,7 +309,7 @@ def install_plugin(sid, project_id, source="modrinth"):
         match=re.search(r'filename="?([^";]+)',cd)
         filename=Path(match.group(1) if match else (str(resource.get("name","plugin")).replace(" ","_")+".jar")).name
         if not filename.lower().endswith(".jar"): filename+=".jar"
-        if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\\.jar",filename): raise ValueError("Unsafe plugin filename")
+        if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.jar",filename): raise ValueError("Unsafe plugin filename")
         dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
         if target.exists(): raise ValueError("A plugin with this filename is already installed")
         target.write_bytes(raw)
