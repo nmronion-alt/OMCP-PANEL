@@ -78,13 +78,21 @@ def servers():
             out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"port":m["port"],"status":"running" if proc and proc.poll() is None else "stopped"})
     return out
 
+def physical_ram_gb():
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                return max(1,int(line.split()[1])//1048576)
+    except Exception: pass
+    return 1
+
 def create(d):
     name=str(d.get('name','')).strip(); ver=str(d.get('version','')).strip(); software=str(d.get('software','paper')).lower()
     mem=int(d.get('memory',2)); port=int(d.get('port',25565))
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
     if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?',ver): raise ValueError('Invalid Minecraft version')
     if software not in ('paper','vanilla','fabric'): raise ValueError('This build currently supports Paper, Vanilla and Fabric. Forge, Spigot and Velocity are not available yet.')
-    if not 1<=mem<=64 or not 1024<=port<=65535: raise ValueError('RAM must be 1-64 GB; port 1024-65535')
+    if not 1<=mem<=physical_ram_gb() or not 1024<=port<=65535: raise ValueError('RAM must be between 1 GB and host RAM ('+str(physical_ram_gb())+' GB); port 1024-65535')
     if not d.get('eulaAccepted'): raise ValueError('Accept the Minecraft EULA first')
     if not shutil.which('java'): raise ValueError('Java runtime not found')
     if any(s['name'].lower()==name.lower() or s['port']==port for s in servers()): raise ValueError('Name or port already used')
@@ -506,7 +514,7 @@ class Handler(BaseHTTPRequestHandler):
                 proc=PROCS.get(sid)
                 if proc and proc.poll() is None: raise ValueError("Stop the server before changing settings")
                 mem=int(d.get("memory",meta.get("memory",2)))
-                if not 1<=mem<=64: raise ValueError("Memory must be 1-64 GB")
+                if not 1<=mem<=physical_ram_gb(): raise ValueError("Memory must be between 1 GB and host RAM ("+str(physical_ram_gb())+" GB)")
                 java_path=str(d.get("javaPath",""))
                 valid={r["path"] for r in java_runtimes()}
                 if java_path and java_path not in valid: raise ValueError("Selected Java runtime is not installed")
