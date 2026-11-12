@@ -682,13 +682,17 @@ def start_tunnel(sid, provider):
     return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
 
 def tunnel_info(sid):
-    if MINEKUBE_STATE.get(sid) or (safe_dir(sid)/"plugins"/"connect-spigot.jar").exists() or (safe_dir(sid)/"plugins"/"connect-velocity.jar").exists() or (safe_dir(sid)/"plugins"/"connect-bungee.jar").exists(): return minekube_info(sid)
     with TUNNEL_LOCK:
         entry=TUNNELS.get(sid)
-        if not entry: return {"status":"stopped","provider":None,"address":None,"logs":""}
-        p=entry["proc"]; alive=p.poll() is None
-        status=("running" if entry["address"] else "starting") if alive else "stopped"
-        return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"\n".join(entry["lines"][-30:])}
+        if entry:
+            p=entry["proc"]; alive=p.poll() is None
+            if alive:
+                status=("running" if entry["address"] else "starting")
+                return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"\n".join(entry["lines"][-30:])}
+    if MINEKUBE_STATE.get(sid) or (safe_dir(sid)/"plugins"/"connect-spigot.jar").exists() or (safe_dir(sid)/"plugins"/"connect-velocity.jar").exists() or (safe_dir(sid)/"plugins"/"connect-bungee.jar").exists():
+        return minekube_info(sid)
+    if entry: return {"status":"stopped","provider":entry["provider"],"address":None,"logs":"Routing process has stopped."}
+    return {"status":"stopped","provider":None,"address":None,"logs":""}
 
 def stop_tunnel(sid):
     with TUNNEL_LOCK:
