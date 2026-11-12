@@ -710,7 +710,12 @@ class Handler(BaseHTTPRequestHandler):
             if x:
                 sid=x.group(1); f=safe_dir(sid)/"console.log"
                 online=server_running(sid)
-                return send(self,200,{"status":"running" if online else "offline","logs":f.read_text(errors="replace")[-80000:] if online and f.exists() else ""})
+                logs=f.read_text(errors="replace")[-80000:] if online and f.exists() else ""
+                plugin_dir=safe_dir(sid)/"plugins"
+                installed=sorted(p.stem for p in plugin_dir.glob("*.jar") if p.is_file() and not p.is_symlink()) if plugin_dir.is_dir() else []
+                enabled=set(re.findall(r"Enabling\\s+([^\\s]+)",logs))
+                failed=set(re.findall(r"(?:Could not load|Failed to load|Error loading)\\s+(?:plugin\\s+)?[\"']?([^\\s\"']+)",logs,re.I))
+                return send(self,200,{"status":"running" if online else "offline","logs":logs,"plugins":{"installed":len(installed),"enabled":len(enabled),"failed":len(failed),"names":installed}})
             if path=="/api/backups":
                 dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
                 items=[]
