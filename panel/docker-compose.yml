@@ -1,7 +1,7 @@
 services:
   panel:
     build: .
-    container_name: minecraft-panel
+    container_name: omcp-panel
     restart: unless-stopped
     env_file:
       - .env
