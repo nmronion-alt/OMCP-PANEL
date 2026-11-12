@@ -24,6 +24,12 @@ def load_users():
     except Exception:
         raise RuntimeError("users.json is invalid; restore it from backup before continuing")
 
+def atomic_json(path, data):
+    path=Path(path)
+    tmp=path.with_name(path.name+".tmp")
+    tmp.write_text(json.dumps(data,indent=2),encoding="utf-8")
+    os.replace(tmp,path)
+
 def save_users(users):
     tmp=USERSFILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(users,indent=2))
@@ -208,21 +214,42 @@ def java_runtimes():
 def start(sid):
     folder=safe_dir(sid); m=json.loads((folder/"omcp.json").read_text())
     p=PROCS.get(sid)
-    if p and p.poll() is None: raise ValueError("Already running")
+    if p and p.poll() is None: raise ValueError("Server is already running")
     java=m.get("javaPath") or shutil.which("java")
-    if not java: raise ValueError("Java not installed")
-    log=(folder/"console.log").open("ab",buffering=0)
-    p=subprocess.Popen([java,f"-Xms{min(1,int(m['memory']))}G",f"-Xmx{m['memory']}G","-jar",("server.jar" if (folder/"server.jar").exists() else "paper.jar"),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    if not java or not os.path.isfile(java) or not os.access(java,os.X_OK): raise ValueError("Selected Java runtime is missing or not executable. Choose a valid Java runtime in Server Settings.")
+    jar=folder/("server.jar" if (folder/"server.jar").is_file() else "paper.jar")
+    if not jar.is_file() or jar.stat().st_size<100000: raise ValueError("Server JAR is missing or incomplete. Check the server files or use Reinstall server.")
+    memory=int(m.get("memory",2))
+    if memory<1 or memory>physical_ram_gb(): raise ValueError("Saved RAM setting is invalid for this host. Open Server Settings and save a valid memory limit.")
+    log_path=folder/"console.log"
+    try:
+        with log_path.open("ab",buffering=0) as log:
+            log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | JAR: "+jar.name+"\n").encode())
+            p=subprocess.Popen([java,f"-Xms{min(1,memory)}G",f"-Xmx{memory}G","-jar",str(jar),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    except Exception as e:
+        raise ValueError("Could not launch Minecraft: "+str(e))
     PROCS[sid]=p
+    time.sleep(0.25)
+    if p.poll() is not None:
+        tail=log_path.read_text(errors="replace")[-1800:] if log_path.exists() else ""
+        raise ValueError("Minecraft exited during startup (exit "+str(p.returncode)+"). Console: "+tail[-1200:])
     return {"status":"starting","pid":p.pid}
 
 def stop(sid):
     p=PROCS.get(sid)
     if not p or p.poll() is not None: return {"status":"stopped"}
-    try: p.stdin.write(b"stop\n"); p.stdin.flush()
-    except Exception: pass
-    try: p.wait(timeout=40)
-    except subprocess.TimeoutExpired: p.terminate()
+    try:
+        if p.stdin:
+            p.stdin.write(b"stop\n"); p.stdin.flush()
+        p.wait(timeout=40)
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try: p.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait(timeout=5)
+    except Exception as e:
+        raise ValueError("Could not stop Minecraft cleanly: "+str(e))
     return {"status":"stopped"}
 
 def start_tunnel(sid, provider):
@@ -451,7 +478,7 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
             if x:
                 sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-                return send(self,200,{"memory":meta.get("memory",2),"javaPath":meta.get("javaPath",""),"runtimes":java_runtimes()})
+                return send(self,200,{"name":meta.get("name","Minecraft"),"memory":meta.get("memory",2),"memoryMax":physical_ram_gb(),"javaPath":meta.get("javaPath",""),"runtimes":java_runtimes()})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/search",path)
             if x:
                 sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
@@ -523,16 +550,20 @@ class Handler(BaseHTTPRequestHandler):
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
                 proc=PROCS.get(sid)
                 if proc and proc.poll() is None: raise ValueError("Stop the server before changing settings")
+                name=str(d.get("name",meta.get("name","Minecraft"))).strip()
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,31}",name): raise ValueError("Server name must be 2-32 characters: letters, numbers, spaces, _ or -")
                 mem=int(d.get("memory",meta.get("memory",2)))
-                if not 1<=mem<=physical_ram_gb(): raise ValueError("Memory must be between 1 GB and host RAM ("+str(physical_ram_gb())+" GB)")
-                java_path=str(d.get("javaPath",""))
+                maximum=physical_ram_gb()
+                if not 1<=mem<=maximum: raise ValueError("Memory must be between 1 GB and available host RAM ("+str(maximum)+" GB)")
+                java_path=str(d.get("javaPath","")).strip()
                 valid={r["path"] for r in java_runtimes()}
-                if java_path and java_path not in valid: raise ValueError("Selected Java runtime is not installed")
-                meta["memory"]=mem
+                if java_path and java_path not in valid: raise ValueError("Selected Java runtime is not installed. Refresh the page and choose an available runtime.")
+                meta["name"]=name; meta["memory"]=mem
                 if java_path: meta["javaPath"]=java_path
                 else: meta.pop("javaPath",None)
-                (folder/"omcp.json").write_text(json.dumps(meta,indent=2))
-                return send(self,200,{"saved":True,"memory":mem,"javaPath":meta.get("javaPath","")})
+                atomic_json(folder/"omcp.json",meta)
+                check=json.loads((folder/"omcp.json").read_text())
+                return send(self,200,{"saved":True,"name":check["name"],"memory":check["memory"],"javaPath":check.get("javaPath","")})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/reinstall",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
@@ -599,10 +630,16 @@ class Handler(BaseHTTPRequestHandler):
                 raw=str(d.get("content","")).encode("utf-8")
                 if len(raw)>900000: raise ValueError("File too large (maximum 900 KB)")
                 f.parent.mkdir(parents=True,exist_ok=True)
-                tmp=f.with_name(f.name+".omcp-tmp"); tmp.write_bytes(raw)
-                if f.exists(): os.chmod(tmp,f.stat().st_mode & 0o777)
-                os.replace(tmp,f)
-                return send(self,200,{"saved":True,"bytes":len(raw)})
+                tmp=f.with_name(f.name+".omcp-tmp")
+                try:
+                    with tmp.open("wb") as out:
+                        out.write(raw); out.flush(); os.fsync(out.fileno())
+                    if f.exists(): os.chmod(tmp,f.stat().st_mode & 0o777)
+                    os.replace(tmp,f)
+                finally:
+                    if tmp.exists(): tmp.unlink()
+                if not f.is_file() or f.read_bytes()!=raw: raise ValueError("Save verification failed: the file on disk does not match the editor")
+                return send(self,200,{"saved":True,"bytes":len(raw),"path":str(f.relative_to(folder))})
             return send(self,404,{"error":"Not found"})
         except Exception as e: return send(self,400,{"error":str(e)})
     def do_DELETE(self):
