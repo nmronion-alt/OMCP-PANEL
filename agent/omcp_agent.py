@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time, socket
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
@@ -250,7 +250,7 @@ def start(sid):
     if memory<1 or memory>physical_ram_gb(): raise ValueError("Saved RAM setting is invalid for this host. Open Server Settings and save a valid memory limit.")
     log_path=folder/"console.log"
     try:
-        with log_path.open("ab",buffering=0) as log:
+        with log_path.open("wb",buffering=0) as log:
             log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | JAR: "+jar.name+"\n").encode())
             p=subprocess.Popen([java,f"-Xms{min(1,memory)}G",f"-Xmx{memory}G","-jar",str(jar),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     except Exception as e:
@@ -266,7 +266,9 @@ def stop(sid):
     p=PROCS.get(sid)
     tracked=p is not None and p.poll() is None
     pids=server_processes(sid)
-    if not pids: return {"status":"stopped"}
+    if not pids:
+        (safe_dir(sid)/"console.log").unlink(missing_ok=True)
+        return {"status":"stopped"}
     try:
         if tracked and p.stdin:
             p.stdin.write(b"stop\n"); p.stdin.flush()
@@ -287,7 +289,8 @@ def stop(sid):
                 try: os.kill(pid, __import__("signal").SIGKILL)
                 except ProcessLookupError: pass
             time.sleep(0.5)
-        if server_processes(sid): raise ValueError("Minecraft process is still present; check console.log before starting again.")
+        if server_processes(sid): raise ValueError("Minecraft process is still present; check server state before starting again.")
+        (safe_dir(sid)/"console.log").unlink(missing_ok=True)
         return {"status":"stopped"}
     except Exception as e:
         if isinstance(e,ValueError): raise
@@ -299,6 +302,14 @@ def start_tunnel(sid, provider):
     if not server_running(sid): raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
+    port=int(meta.get("port",25565))
+    ready=False
+    for _ in range(20):
+        try:
+            with socket.create_connection(("127.0.0.1",port),timeout=0.5): ready=True
+            break
+        except OSError: time.sleep(0.5)
+    if not ready: raise ValueError("Minecraft process exists, but port "+str(port)+" is not accepting TCP connections yet. Wait for the console to say Done, then retry.")
     with TUNNEL_LOCK:
         old=TUNNELS.get(sid)
         if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
@@ -319,7 +330,7 @@ def start_tunnel(sid, provider):
         except Exception as e:
             with TUNNEL_LOCK: entry["lines"].append("Tunnel output error: "+str(e))
     threading.Thread(target=collect,daemon=True).start()
-    deadline=time.time()+10
+    deadline=time.time()+25
     while time.time()<deadline:
         if entry.get("address"):
             return {"status":"running","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
@@ -351,8 +362,8 @@ def stop_tunnel(sid):
 def plugin_search(query):
     query=str(query or "").strip()
     if len(query)>100: raise ValueError("Search query is too long")
-    ua={"User-Agent":"OMCP/0.6 (https://github.com/nmronion-alt/onion-hub)"}
-    results=[]
+    ua={"User-Agent":"OMCP/0.7 (https://github.com/nmronion-alt/onion-hub)"}
+    results=[]; errors=[]
     facets='[["project_type:plugin"],["categories:paper"]]'
     params="limit=10&index=downloads&facets="+quote(facets)
     if query: params+="&query="+quote(query)
@@ -361,8 +372,8 @@ def plugin_search(query):
         with urllib.request.urlopen(req,timeout=18) as r: data=json.load(r)
         for x in data.get("hits",[]):
             results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"downloads":x.get("downloads",0),"source":"modrinth"})
-    except Exception:
-        pass
+    except Exception as e:
+        errors.append("Modrinth: "+str(e)[:180])
     try:
         endpoint=("https://api.spiget.org/v2/search/resources/"+quote(query,safe="") if query else "https://api.spiget.org/v2/resources")
         endpoint+=("?size=8&field=name&sort=-downloads" if query else "?size=8&sort=-downloads")
@@ -372,15 +383,16 @@ def plugin_search(query):
             rid=x.get("id")
             if rid is not None:
                 results.append({"id":str(rid),"name":x.get("name","Spigot resource"),"description":x.get("tag","") or x.get("description",""),"downloads":x.get("downloads",0),"source":"spiget"})
-    except Exception:
-        pass
+    except Exception as e:
+        errors.append("Spiget: "+str(e)[:180])
     results.sort(key=lambda x:int(x.get("downloads") or 0),reverse=True)
-    return {"plugins":results[:16]}
+    if not results and errors: raise ValueError("Plugin catalogues could not be reached. "+" | ".join(errors))
+    return {"plugins":results[:16],"warnings":errors}
 
 def install_plugin(sid, project_id, source="modrinth"):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if meta.get("software","paper")!="paper": raise ValueError("The plugin installer currently supports Paper servers only.")
-    if server_running(sid): raise ValueError("Stop the server before installing a plugin.")
+    # Plugin JARs can be placed while online; Paper loads them on next restart.
     if source=="spiget":
         if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID")
         req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id)),headers={"User-Agent":"OMCP/0.6"})
@@ -505,8 +517,9 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,server_metrics(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/logs",path)
             if x:
-                f=safe_dir(x.group(1))/"console.log"
-                return send(self,200,{"logs":f.read_text(errors="replace")[-20000:] if f.exists() else ""})
+                sid=x.group(1); f=safe_dir(sid)/"console.log"
+                online=server_running(sid)
+                return send(self,200,{"status":"running" if online else "offline","logs":f.read_text(errors="replace")[-20000:] if online and f.exists() else ""})
             if path=="/api/backups":
                 dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
                 items=[]
@@ -596,7 +609,6 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-                if server_running(sid): raise ValueError("Stop the server before changing settings. OMCP still detects a Minecraft process using this server folder.")
                 name=str(d.get("name",meta.get("name","Minecraft"))).strip()
                 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,31}",name): raise ValueError("Server name must be 2-32 characters: letters, numbers, spaces, _ or -")
                 mem=int(d.get("memory",meta.get("memory",2)))
@@ -610,7 +622,7 @@ class Handler(BaseHTTPRequestHandler):
                 else: meta.pop("javaPath",None)
                 atomic_json(folder/"omcp.json",meta)
                 check=json.loads((folder/"omcp.json").read_text())
-                return send(self,200,{"saved":True,"name":check["name"],"memory":check["memory"],"javaPath":check.get("javaPath","")})
+                return send(self,200,{"saved":True,"name":check["name"],"memory":check["memory"],"javaPath":check.get("javaPath",""),"apply":"next-start"})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/reinstall",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
