@@ -279,7 +279,16 @@ def start_tunnel(sid, provider):
         except Exception as e:
             with TUNNEL_LOCK: entry["lines"].append("Tunnel output error: "+str(e))
     threading.Thread(target=collect,daemon=True).start()
-    return {"status":"starting","provider":"pinggy","port":meta["port"]}
+    deadline=time.time()+10
+    while time.time()<deadline:
+        if entry.get("address"):
+            return {"status":"running","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
+        if proc.poll() is not None:
+            time.sleep(0.2)
+            detail="\\n".join(entry["lines"][-30:]) or "SSH exited without returning a tunnel address."
+            raise ValueError("Pinggy tunnel process exited (code "+str(proc.returncode)+"). "+detail[-1800:])
+        time.sleep(0.2)
+    return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-20:])}
 
 def tunnel_info(sid):
     with TUNNEL_LOCK:
