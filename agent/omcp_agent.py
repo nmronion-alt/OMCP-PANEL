@@ -74,33 +74,46 @@ def servers():
     for p in SERVERS.iterdir():
         if p.is_dir() and re.fullmatch(r"[a-f0-9]{8}",p.name) and (p/"omcp.json").exists():
             m=json.loads((p/"omcp.json").read_text()); proc=PROCS.get(p.name)
-            out.append({"id":p.name,"name":m["name"],"version":m["version"],"memory":m["memory"],"port":m["port"],"status":"running" if proc and proc.poll() is None else "stopped"})
+            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"port":m["port"],"status":"running" if proc and proc.poll() is None else "stopped"})
     return out
 
 def create(d):
-    name=str(d.get("name","")).strip(); ver=str(d.get("version","")).strip()
-    mem=int(d.get("memory",2)); port=int(d.get("port",25565))
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,23}",name): raise ValueError("Name must be 2-24 letters, numbers, _ or -")
-    if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?",ver): raise ValueError("Invalid Minecraft version")
-    if not 1<=mem<=64 or not 1024<=port<=65535: raise ValueError("RAM must be 1-64 GB; port 1024-65535")
-    if not d.get("eulaAccepted"): raise ValueError("Accept the Minecraft EULA first")
-    if not shutil.which("java"): raise ValueError("Install a compatible Java runtime first")
-    if any(s["name"].lower()==name.lower() or s["port"]==port for s in servers()): raise ValueError("Name or port already used")
+    name=str(d.get('name','')).strip(); ver=str(d.get('version','')).strip(); software=str(d.get('software','paper')).lower()
+    mem=int(d.get('memory',2)); port=int(d.get('port',25565))
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
+    if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?',ver): raise ValueError('Invalid Minecraft version')
+    if software not in ('paper','vanilla'): raise ValueError('Currently supported: Paper and Vanilla. Fabric, Forge, Spigot and Velocity are not yet implemented.')
+    if not 1<=mem<=64 or not 1024<=port<=65535: raise ValueError('RAM must be 1-64 GB; port 1024-65535')
+    if not d.get('eulaAccepted'): raise ValueError('Accept the Minecraft EULA first')
+    if not shutil.which('java'): raise ValueError('Java runtime not found')
+    if any(s['name'].lower()==name.lower() or s['port']==port for s in servers()): raise ValueError('Name or port already used')
     sid=secrets.token_hex(4); folder=safe_dir(sid); folder.mkdir(mode=0o750)
     try:
-        api=f"https://api.papermc.io/v2/projects/paper/versions/{ver}/builds"
-        req=urllib.request.Request(api,headers={"User-Agent":"OMCP/0.1"})
-        with urllib.request.urlopen(req,timeout=30) as r: builds=json.load(r)["builds"]
-        if not builds: raise ValueError("No Paper build for this version")
-        b=builds[-1]["build"]; jar=f"paper-{ver}-{b}.jar"
-        url=f"https://api.papermc.io/v2/projects/paper/versions/{ver}/builds/{b}/downloads/{jar}"
-        with urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"OMCP/0.1"}),timeout=120) as r:
-            with (folder/"paper.jar").open("wb") as f: shutil.copyfileobj(r,f)
-        (folder/"eula.txt").write_text("eula=true\n")
-        (folder/"server.properties").write_text(f"server-port={port}\n")
-        (folder/"omcp.json").write_text(json.dumps({"name":name,"version":ver,"memory":mem,"port":port},indent=2))
-        return next(s for s in servers() if s["id"]==sid)
-    except Exception: shutil.rmtree(folder,ignore_errors=True); raise
+        jar=folder/'server.jar'
+        if software=='paper':
+            api='https://fill.papermc.io/v3/projects/paper/versions/'+ver+'/builds'
+            req=urllib.request.Request(api,headers={'User-Agent':'OMCP/0.2 (https://github.com/nmronion-alt/onion-hub)'})
+            with urllib.request.urlopen(req,timeout=30) as r: builds=json.load(r)
+            stable=next((x for x in builds if x.get('channel')=='STABLE' and x.get('downloads',{}).get('server:default',{}).get('url')),None)
+            if not stable: raise ValueError('No stable Paper build found for Minecraft '+ver)
+            url=stable['downloads']['server:default']['url']
+        else:
+            req=urllib.request.Request('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json',headers={'User-Agent':'OMCP/0.2'})
+            with urllib.request.urlopen(req,timeout=30) as r: manifest=json.load(r)
+            item=next((x for x in manifest['versions'] if x['id']==ver and x['type'] in ('release','snapshot')),None)
+            if not item: raise ValueError('Minecraft version not found in official manifest')
+            with urllib.request.urlopen(urllib.request.Request(item['url'],headers={'User-Agent':'OMCP/0.2'}),timeout=30) as r: meta=json.load(r)
+            url=meta.get('downloads',{}).get('server',{}).get('url')
+            if not url: raise ValueError('No official Vanilla server download for this version')
+        req=urllib.request.Request(url,headers={'User-Agent':'OMCP/0.2 (https://github.com/nmronion-alt/onion-hub)'})
+        with urllib.request.urlopen(req,timeout=180) as r, jar.open('wb') as out: shutil.copyfileobj(r,out)
+        (folder/'eula.txt').write_text('eula=true\n')
+        (folder/'server.properties').write_text('server-port='+str(port)+'\n')
+        (folder/'omcp.json').write_text(json.dumps({'name':name,'version':ver,'software':software,'memory':mem,'port':port},indent=2))
+        return next(s for s in servers() if s['id']==sid)
+    except Exception:
+        shutil.rmtree(folder,ignore_errors=True)
+        raise
 
 def start(sid):
     folder=safe_dir(sid); m=json.loads((folder/"omcp.json").read_text())
@@ -109,7 +122,7 @@ def start(sid):
     java=shutil.which("java")
     if not java: raise ValueError("Java not installed")
     log=(folder/"console.log").open("ab",buffering=0)
-    p=subprocess.Popen([java,f"-Xms1G",f"-Xmx{m['memory']}G","-jar","paper.jar","nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    p=subprocess.Popen([java,f"-Xms1G",f"-Xmx{m['memory']}G","-jar","server.jar","nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     PROCS[sid]=p
     return {"status":"starting","pid":p.pid}
 
@@ -188,8 +201,10 @@ class Handler(BaseHTTPRequestHandler):
                     users[username]={"password":password_hash(password),"role":"admin","created":int(time.time())}
                     save_users(users)
                 else:
-                    record=users.get(username)
-                    if not record or not password_ok(password,record): return send(self,401,{"error":"Incorrect username or password"})
+                    canonical=next((u for u in users if u.casefold()==username.casefold()),None)
+                    record=users.get(canonical) if canonical else None
+                    if not record or not password_ok(password,record): return send(self,401,{"error":"Incorrect username or password. Usernames are case-insensitive; password remains case-sensitive."})
+                    username=canonical
                 return send(self,200,{"token":new_session(username),"user":{"username":username,"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
         if path=="/api/logout":
@@ -205,7 +220,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
                 if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
                 users=load_users()
-                if username in users: return send(self,409,{"error":"Username already exists"})
+                if any(u.casefold()==username.casefold() for u in users): return send(self,409,{"error":"Username already exists"})
+                username=username.lower()
                 users[username]={"password":password_hash(password),"role":"user","created":int(time.time())}
                 save_users(users)
                 return send(self,201,{"user":{"username":username,"role":"user"}})
