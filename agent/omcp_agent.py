@@ -272,13 +272,14 @@ class Handler(BaseHTTPRequestHandler):
                 if path=="/api/setup":
                     if users: return send(self,409,{"error":"Admin account already exists"})
                     if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
-                    if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
-                    users[username]={"password":password_hash(password),"role":"admin","created":int(time.time())}
+                    users[username]={"role":"admin","created":int(time.time()),"passwordless_admin":True}
                     save_users(users)
                 else:
                     canonical=next((u for u in users if u.strip().casefold()==username.strip().casefold()),None)
                     record=users.get(canonical) if canonical else None
-                    if not record or not password_ok(password,record): return send(self,401,{"error":"Login failed. Check the username and password, and make sure this is the same VPS/data folder where the admin account was created."})
+                    if not record: return send(self,401,{"error":"Unknown username. Check that this is the same VPS/data folder where your admin account was created."})
+                    if record.get("role")!="admin" and not password_ok(password,record):
+                        return send(self,401,{"error":"Incorrect username or password."})
                     username=canonical
                 return send(self,200,{"token":new_session(username),"user":{"username":username,"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
