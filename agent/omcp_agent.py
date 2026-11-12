@@ -178,7 +178,7 @@ def start_sftp_service():
         if SFTP_HOST_KEY.exists(): host_key=paramiko.RSAKey.from_private_key_file(str(SFTP_HOST_KEY))
         else:
             host_key=paramiko.RSAKey.generate(2048); host_key.write_private_key_file(str(SFTP_HOST_KEY)); os.chmod(SFTP_HOST_KEY,0o600)
-        fingerprint=":".join("%02x"%b for b in host_key.get_fingerprint())
+        fingerprint="SHA256:"+base64.b64encode(__import__("hashlib").sha256(host_key.asbytes()).digest()).decode().rstrip("=")
         listener=socket.socket(socket.AF_INET,socket.SOCK_STREAM); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         listener.bind(("0.0.0.0",SFTP_PORT)); listener.listen(64); listener.settimeout(1.0)
         def accept_loop():
