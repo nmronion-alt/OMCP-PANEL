@@ -52,9 +52,11 @@ def new_session(username):
     return token
 
 def session_user(handler):
+    # Some HTTPS reverse proxies remove Authorization headers. Accept a dedicated
+    # panel-session header as a fallback while keeping the same random session token.
     header=handler.headers.get("Authorization","")
-    if not header.startswith("Bearer "): return None
-    token=header[7:]
+    token=header[7:] if header.startswith("Bearer ") else handler.headers.get("X-OMCP-Session","")
+    if not token: return None
     with SESSION_LOCK:
         item=SESSIONS.get(token)
         if not item: return None
