@@ -310,7 +310,7 @@ def install_plugin(sid, project_id, source="modrinth"):
         if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID")
         req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id)),headers={"User-Agent":"OMCP/0.6"})
         with urllib.request.urlopen(req,timeout=20) as r: resource=json.load(r)
-        if resource.get("external"): raise ValueError("This Spigot resource uses an external download and cannot be installed automatically.")
+        # Let Spiget resolve external download redirects; the JAR signature/size checks below still validate the result.
         req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id))+"/download",headers={"User-Agent":"OMCP/0.6"})
         with urllib.request.urlopen(req,timeout=60) as r:
             raw=r.read(50*1024*1024+1)
