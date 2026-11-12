@@ -19,7 +19,7 @@ The installer checks Docker/Compose, clones this branch into `/opt/omcp`, create
 - Create Java Edition containers using the maintained `itzg/minecraft-server` image.
 - Initial software choices: Vanilla, Paper, Purpur, Fabric, Forge and NeoForge.
 - Minecraft version field, Java heap selection (1–16 GB), per-server persistent Docker volume.
-- Start, stop, restart and recent container logs.
+- Start, stop, restart, recent container logs, and a private in-panel RCON console.
 - Minecraft server ports bind to host loopback; a local TCP relay can connect to `127.0.0.1:<assigned-port>`.
 - EULA acceptance is an explicit checkbox before a server is created.
 
