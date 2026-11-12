@@ -30,6 +30,10 @@ class ServerCreate(BaseModel):
     eula_accepted: bool = False
 
 
+class ConsoleInput(BaseModel):
+    command: str = Field(min_length=1, max_length=256)
+
+
 def require_admin(authorization: Optional[str] = Header(default=None)):
     if not ADMIN_TOKEN or len(ADMIN_TOKEN) < 32:
         raise HTTPException(status_code=503, detail="Panel admin token is not configured securely.")
@@ -186,6 +190,33 @@ def server_action(server_id: str, action: str, _: bool = Depends(require_admin))
         raise HTTPException(status_code=404, detail="Server not found.") from exc
     except DockerException as exc:
         raise HTTPException(status_code=502, detail=f"Docker action failed: {exc.__class__.__name__}") from exc
+
+
+@app.post("/api/servers/{server_id}/console")
+def server_console(server_id: str, payload: ConsoleInput, _: bool = Depends(require_admin)):
+    command = payload.command.strip()
+    if not command or any(char in command for char in "\\r\\n\\x00"):
+        raise HTTPException(status_code=422, detail="Enter one console command on a single line.")
+    if command.startswith("/"):
+        command = command[1:]
+    client = docker_client()
+    try:
+        item = client.containers.get(server_id)
+        if item.labels.get("managed-by") != "omcp":
+            raise HTTPException(status_code=404, detail="Managed server not found.")
+        if item.status != "running":
+            raise HTTPException(status_code=409, detail="Start the server before sending console commands.")
+        result = item.exec_run(["rcon-cli", command], demux=True)
+        stdout, stderr = result.output or (b"", b"")
+        output = (stdout or b"").decode("utf-8", errors="replace")
+        error = (stderr or b"").decode("utf-8", errors="replace")
+        if result.exit_code != 0:
+            raise HTTPException(status_code=502, detail=(error or output or "RCON command failed.")[:1000])
+        return {"output": output or error or "Command sent."}
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail="Server not found.") from exc
+    except DockerException as exc:
+        raise HTTPException(status_code=502, detail=f"Console command failed: {exc.__class__.__name__}") from exc
 
 
 @app.get("/api/servers/{server_id}/logs")
