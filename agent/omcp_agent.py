@@ -149,6 +149,10 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/api/users":
                 if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
                 return send(self,200,{"users":[{"username":u,"role":v.get("role","user")} for u,v in load_users().items()]})
+            if path=="/api/me":
+                u=load_users().get(self.username)
+                if not u: return send(self,401,{"error":"Account no longer exists"})
+                return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
             if path=="/api/metrics":
                 m={}
