@@ -14,6 +14,7 @@ SESSIONS={}
 SESSION_LOCK=threading.RLock()
 SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
+TUNNELS={}; TUNNEL_LOCK=threading.RLock()
 
 def load_users():
     if not USERSFILE.exists(): return {}
@@ -147,6 +148,50 @@ def stop(sid):
     except subprocess.TimeoutExpired: p.terminate()
     return {"status":"stopped"}
 
+def start_tunnel(sid, provider):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    if provider!="pinggy": raise ValueError("Only Pinggy is connected in this build; Bore and Minekube adapters are not ready yet.")
+    ssh=shutil.which("ssh")
+    if not ssh: raise ValueError("OpenSSH client is not installed")
+    with TUNNEL_LOCK:
+        old=TUNNELS.get(sid)
+        if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
+        cmd=[ssh,"-p","443","-o","BatchMode=yes","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-R0:localhost:"+str(meta["port"]),"tcp@free.pinggy.io"]
+        proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True)
+        entry={"proc":proc,"provider":"pinggy","lines":[],"address":None,"started":int(time.time())}
+        TUNNELS[sid]=entry
+    def collect():
+        try:
+            for line in proc.stdout:
+                line=line.rstrip()
+                with TUNNEL_LOCK:
+                    entry["lines"].append(line)
+                    entry["lines"]=entry["lines"][-80:]
+                    match=re.search(r"tcp://((?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}):(\\d{2,5})",line)
+                    if match: entry["address"]=match.group(1)+":"+match.group(2)
+        except Exception as e:
+            with TUNNEL_LOCK: entry["lines"].append("Tunnel output error: "+str(e))
+    threading.Thread(target=collect,daemon=True).start()
+    return {"status":"starting","provider":"pinggy","port":meta["port"]}
+
+def tunnel_info(sid):
+    with TUNNEL_LOCK:
+        entry=TUNNELS.get(sid)
+        if not entry: return {"status":"stopped","provider":None,"address":None,"logs":""}
+        p=entry["proc"]
+        return {"status":"running" if p.poll() is None else "stopped","provider":entry["provider"],"address":entry["address"],"logs":"\\n".join(entry["lines"][-30:])}
+
+def stop_tunnel(sid):
+    with TUNNEL_LOCK:
+        entry=TUNNELS.get(sid)
+        if not entry: return {"status":"stopped"}
+        p=entry["proc"]
+        if p.poll() is None:
+            p.terminate()
+            try: p.wait(timeout=5)
+            except subprocess.TimeoutExpired: p.kill()
+        return {"status":"stopped"}
+
 def body(h):
     n=int(h.headers.get("Content-Length","0"))
     if n>1048576: raise ValueError("Request too large")
@@ -185,6 +230,8 @@ class Handler(BaseHTTPRequestHandler):
                     k,v=line.split(":",1); m[k]=int(v.strip().split()[0])*1024
                 total=m.get("MemTotal",0); used=total-m.get("MemAvailable",0)
                 return send(self,200,{"memoryTotal":total,"memoryUsed":used,"cpuCount":os.cpu_count() or 1})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/tunnel",path)
+            if x: return send(self,200,tunnel_info(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/logs",path)
             if x:
                 f=safe_dir(x.group(1))/"console.log"
@@ -256,6 +303,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e: return send(self,400,{"error":str(e)})
         try:
             d=body(self)
+            tx=re.fullmatch(r"/api/servers/([a-f0-9]{8})/tunnel/(start|stop)",path)
+            if tx:
+                sid,action=tx.groups()
+                if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
+                return send(self,200,stop_tunnel(sid))
             if path=="/api/servers": return send(self,201,{"server":create(d)})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
