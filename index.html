@@ -3,22 +3,43 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OMCP — Onion Minecraft Panel</title>
-<meta name="description" content="OMCP is Onion Minecraft Panel, deployed by the ONION HUB one-command installer.">
+<meta name="description" content="OMCP standalone Minecraft server management panel preview.">
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#100d18;color:#f5f0ff}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center}
-main{width:min(760px,100%);padding:48px 24px;text-align:center}
-h1{font-size:clamp(3rem,10vw,6rem);line-height:1;margin:0;color:#b88cff;letter-spacing:.04em}
-h2{font-size:1.25rem;color:#eee5ff;font-weight:600;margin:18px 0}
-p{color:#c8bdd8;line-height:1.7}
-a{display:inline-block;margin:12px;padding:12px 18px;border:1px solid #9b69e8;border-radius:10px;color:#eee;text-decoration:none}
-small{display:block;margin-top:30px;color:#9589a6}
+:root{color-scheme:dark;--bg:#0d0b13;--panel:#171321;--panel2:#201a2d;--line:#30263f;--text:#f4efff;--muted:#a99db9;--purple:#b78cff;--green:#63d6a0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,sans-serif}
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:100vh}.side{padding:26px 18px;background:#110e19;border-right:1px solid var(--line)}
+.brand{font-size:25px;font-weight:850;letter-spacing:2px;color:var(--purple)}.sub{font-size:12px;color:var(--muted);margin-top:0}
+.nav{margin-top:34px;display:grid;gap:8px}.nav span{padding:11px 13px;border-radius:10px;color:var(--muted)}.nav .active{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+.main{padding:34px clamp(18px,4vw,54px);max-width:1500px;width:100%;margin:auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}.eyebrow{color:var(--muted);font-size:13px}.title{font-size:30px;font-weight:750;margin:4px 0 0}
+.status{border:1px solid var(--line);background:var(--panel);padding:8px 12px;border-radius:999px;color:var(--muted);font-size:12px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:28px 0}.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:19px}.metric{font-size:27px;font-weight:750;margin-top:8px}.muted{color:var(--muted);font-size:13px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:28px 0 14px}.section-head h2{font-size:18px;margin:0}
+.btn{border:1px solid #8f67c3;background:#6e45a3;color:white;padding:10px 15px;border-radius:10px;font-weight:650}
+.server{display:flex;align-items:center;justify-content:space-between;gap:15px}.server-name{font-weight:700}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:8px}
+.grid2{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}.feature{padding:16px 0;border-bottom:1px solid var(--line)}.feature:last-child{border:0}
+.tag{font-size:11px;color:#d4baff;background:#302343;border:1px solid #4a3563;padding:4px 8px;border-radius:20px}
+footer{margin-top:35px;color:#756b83;font-size:12px}
+@media(max-width:760px){.shell{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--line);padding:16px}.nav{display:flex;overflow:auto;margin-top:14px}.nav span{white-space:nowrap}.stats,.grid2{grid-template-columns:1fr}.main{padding-top:22px}}
 </style>
 </head>
-<body><main>
-<h1>OMCP</h1><h2>Onion Minecraft Panel</h2>
-<p>Create and manage Minecraft servers from one panel. ONION HUB is the one-command installer that prepares the panel and its hosting node.</p>
-<p>Public-IP and private-network deployment modes are planned, with real routing and node-heartbeat verification.</p>
-<a href="https://github.com/nmronion-alt/onion-hub">ONION HUB on GitHub</a>
-<small>Early development · Not a production installer yet</small>
-</main></body></html>
+<body><div class="shell">
+<aside class="side"><div class="brand">OMCP</div><p class="sub">Onion Minecraft Panel</p>
+<nav class="nav"><span class="active">Overview</span><span>Servers</span><span>File Manager</span><span>Backups</span><span>Software</span><span>Routing</span><span>Settings</span></nav>
+</aside>
+<main class="main">
+<header class="top"><div><div class="eyebrow">Workspace / Overview</div><h1 class="title">Dashboard</h1></div><div class="status">DESIGN PREVIEW · API NOT CONNECTED</div></header>
+<section class="stats">
+<div class="card"><div class="muted">Total servers</div><div class="metric">0</div><div class="muted">Create your first server</div></div>
+<div class="card"><div class="muted">Host memory</div><div class="metric">—</div><div class="muted">Agent metrics pending</div></div>
+<div class="card"><div class="muted">Host CPU</div><div class="metric">—</div><div class="muted">Agent metrics pending</div></div>
+</section>
+<div class="section-head"><h2>Your servers</h2><button class="btn" type="button" disabled title="Available when the server API is implemented">＋ Create Server</button></div>
+<section class="card"><div class="muted">No servers created yet</div><h2>Start with your first Minecraft server</h2><p class="muted">The finished panel will let you choose software, version, Java runtime, memory and server port here.</p></section>
+<div class="section-head"><h2>Host services</h2><span class="tag">Standalone agent design</span></div>
+<section class="grid2">
+<div class="card"><div class="feature"><strong>Panel access</strong><div class="muted">Cloudflare Tunnel · planned</div></div><div class="feature"><strong>Local agent</strong><div class="muted">Process manager · planned</div></div><div class="feature"><strong>Game routing</strong><div class="muted">External TCP provider · planned</div></div></div>
+<div class="card"><strong>Quick actions</strong><div class="feature muted">Console — coming with managed processes</div><div class="feature muted">File manager — coming with secure API</div><div class="feature muted">Backups — coming with storage layer</div></div>
+</section>
+<footer>OMCP preview only. This page does not yet control Minecraft processes or create servers.</footer>
+</main></div></body></html>
