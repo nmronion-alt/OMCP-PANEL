@@ -42,3 +42,23 @@ The current shell script is still a diagnostics/toolbox preview. It does **not**
 - Do not put API keys, passwords, tunnel tokens, or database credentials in Git, URLs, shell history, or logs.
 - Download release assets from official project sources and verify checksums/signatures where published.
 - Never use a blind remote `curl | bash` root execution path for unreviewed payloads.
+
+
+## Read-only preflight module
+
+Run `bash preflight.sh` before attempting any deployment. This module checks:
+
+- Ubuntu/Debian family, root access, and CPU architecture
+- CPU, host-visible RAM, and free root filesystem space
+- Whether systemd is PID 1
+- Container/Kubernetes markers
+- Whether the Docker daemon is actually reachable (the Docker CLI alone is not enough)
+- Outbound IPv4 and visible network interfaces
+
+The preflight is read-only: it does not install packages, alter firewall rules, create services, or touch existing Minecraft data. Exit codes: `0` = no blocking findings, `1` = conditional/warnings, `2` = blocked.
+
+A successful preflight is not proof of inbound reachability. Direct networking must be tested from an independent network. Private networking needs an actual relay provider for each required protocol. Cloudflare Tunnel is for publishing the Panel's HTTP(S) endpoint; it does not create a general public Minecraft TCP relay.
+
+## Current development milestone
+
+The repository is implementing the compatibility/preflight layer first. The Panel, database, Wings deployment, node registration, routing adapters, and Green Heart verification are not yet production-ready. Do not run this repository as a production installer or expect it to create a working hosting panel yet.
