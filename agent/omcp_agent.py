@@ -78,12 +78,39 @@ def safe_dir(sid):
     if p.parent!=SERVERS.resolve(): raise ValueError("Unsafe path")
     return p
 
+def server_processes(sid):
+    """Find Minecraft JVMs by exact server working directory and JAR path."""
+    folder=safe_dir(sid)
+    expected={(folder/"server.jar").resolve(),(folder/"paper.jar").resolve()}
+    found=[]
+    tracked=PROCS.get(sid)
+    if tracked and tracked.poll() is None: found.append(tracked.pid)
+    try: entries=list(Path("/proc").iterdir())
+    except Exception: entries=[]
+    for entry in entries:
+        if not entry.name.isdigit(): continue
+        pid=int(entry.name)
+        try:
+            if Path(os.readlink(str(entry/"cwd"))).resolve()!=folder: continue
+            args=[x.decode(errors="replace") for x in (entry/"cmdline").read_bytes().split(b"\\0") if x]
+            if "-jar" not in args: continue
+            jar_arg=args[args.index("-jar")+1]
+            if Path(jar_arg).resolve() not in expected: continue
+            if "java" not in Path(os.readlink(str(entry/"exe"))).name.lower(): continue
+            if pid not in found: found.append(pid)
+        except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError, OSError):
+            continue
+    return found
+
+def server_running(sid):
+    return bool(server_processes(sid))
+
 def servers():
     out=[]
     for p in SERVERS.iterdir():
         if p.is_dir() and re.fullmatch(r"[a-f0-9]{8}",p.name) and (p/"omcp.json").exists():
-            m=json.loads((p/"omcp.json").read_text()); proc=PROCS.get(p.name)
-            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"port":m["port"],"status":"running" if proc and proc.poll() is None else "stopped"})
+            m=json.loads((p/"omcp.json").read_text())
+            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"port":m["port"],"status":"running" if server_running(p.name) else "stopped"})
     return out
 
 def physical_ram_gb():
@@ -176,8 +203,7 @@ def download_server_jar(software, ver, destination):
 def upgrade_server(sid, ver):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?",ver): raise ValueError("Invalid Minecraft version")
-    proc=PROCS.get(sid)
-    if proc and proc.poll() is None: raise ValueError("Stop the server before changing its version")
+    if server_running(sid): raise ValueError("Stop the server before changing its version")
     software=meta.get("software","paper")
     dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
     backup=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
@@ -213,8 +239,9 @@ def java_runtimes():
 
 def start(sid):
     folder=safe_dir(sid); m=json.loads((folder/"omcp.json").read_text())
-    p=PROCS.get(sid)
-    if p and p.poll() is None: raise ValueError("Server is already running")
+    with LOCK:
+        existing=server_processes(sid)
+        if existing: raise ValueError("Minecraft is already running for this server (PID "+", ".join(map(str,existing))+"). Stop it first; OMCP detected the live process even after an agent restart.")
     java=m.get("javaPath") or shutil.which("java")
     if not java or not os.path.isfile(java) or not os.access(java,os.X_OK): raise ValueError("Selected Java runtime is missing or not executable. Choose a valid Java runtime in Server Settings.")
     jar=folder/("server.jar" if (folder/"server.jar").is_file() else "paper.jar")
@@ -237,26 +264,39 @@ def start(sid):
 
 def stop(sid):
     p=PROCS.get(sid)
-    if not p or p.poll() is not None: return {"status":"stopped"}
+    tracked=p is not None and p.poll() is None
+    pids=server_processes(sid)
+    if not pids: return {"status":"stopped"}
     try:
-        if p.stdin:
-            p.stdin.write(b"stop\n"); p.stdin.flush()
-        p.wait(timeout=40)
-    except subprocess.TimeoutExpired:
-        p.terminate()
-        try: p.wait(timeout=8)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.wait(timeout=5)
+        if tracked and p.stdin:
+            p.stdin.write(b"stop\\n"); p.stdin.flush()
+            try: p.wait(timeout=45)
+            except subprocess.TimeoutExpired: p.terminate()
+        else:
+            # A post-restart orphan has no console pipe; SIGTERM runs JVM shutdown hooks.
+            for pid in pids:
+                try: os.kill(pid, __import__("signal").SIGTERM)
+                except ProcessLookupError: pass
+        deadline=time.time()+45
+        while time.time()<deadline and server_processes(sid):
+            if tracked and p.poll() is not None: break
+            time.sleep(0.25)
+        remaining=server_processes(sid)
+        if remaining:
+            for pid in remaining:
+                try: os.kill(pid, __import__("signal").SIGKILL)
+                except ProcessLookupError: pass
+            time.sleep(0.5)
+        if server_processes(sid): raise ValueError("Minecraft process is still present; check console.log before starting again.")
+        return {"status":"stopped"}
     except Exception as e:
+        if isinstance(e,ValueError): raise
         raise ValueError("Could not stop Minecraft cleanly: "+str(e))
-    return {"status":"stopped"}
 
 def start_tunnel(sid, provider):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if provider!="pinggy": raise ValueError("Bore and Minekube need provider-specific setup/credentials and are not enabled yet. Select Pinggy for the available adapter.")
-    server=PROCS.get(sid)
-    if not server or server.poll() is not None: raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
+    if not server_running(sid): raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
     with TUNNEL_LOCK:
@@ -557,8 +597,7 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-                proc=PROCS.get(sid)
-                if proc and proc.poll() is None: raise ValueError("Stop the server before changing settings")
+                if server_running(sid): raise ValueError("Stop the server before changing settings. OMCP still detects a Minecraft process using this server folder.")
                 name=str(d.get("name",meta.get("name","Minecraft"))).strip()
                 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,31}",name): raise ValueError("Server name must be 2-32 characters: letters, numbers, spaces, _ or -")
                 mem=int(d.get("memory",meta.get("memory",2)))
@@ -576,8 +615,7 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/reinstall",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-                proc=PROCS.get(sid)
-                if proc and proc.poll() is None: raise ValueError("Stop the server before reinstalling")
+                if server_running(sid): raise ValueError("Stop the server before reinstalling.")
                 dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
                 backup=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
                 with zipfile.ZipFile(backup,"w",zipfile.ZIP_DEFLATED) as z:
