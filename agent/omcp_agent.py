@@ -82,7 +82,7 @@ def create(d):
     mem=int(d.get('memory',2)); port=int(d.get('port',25565))
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
     if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?',ver): raise ValueError('Invalid Minecraft version')
-    if software not in ('paper','vanilla'): raise ValueError('Currently supported: Paper and Vanilla. Fabric, Forge, Spigot and Velocity are not yet implemented.')
+    if software not in ('paper','vanilla','fabric'): raise ValueError('This build currently supports Paper, Vanilla and Fabric. Forge, Spigot and Velocity are not available yet.')
     if not 1<=mem<=64 or not 1024<=port<=65535: raise ValueError('RAM must be 1-64 GB; port 1024-65535')
     if not d.get('eulaAccepted'): raise ValueError('Accept the Minecraft EULA first')
     if not shutil.which('java'): raise ValueError('Java runtime not found')
@@ -91,12 +91,24 @@ def create(d):
     try:
         jar=folder/'server.jar'
         if software=='paper':
-            api='https://fill.papermc.io/v3/projects/paper/versions/'+ver+'/builds'
-            req=urllib.request.Request(api,headers={'User-Agent':'OMCP/0.2 (https://github.com/nmronion-alt/onion-hub)'})
-            with urllib.request.urlopen(req,timeout=30) as r: builds=json.load(r)
+            api='https://fill.papermc.io/v3/projects/paper/versions/'+ver+'/builds?channel=STABLE&limit=1'
+            req=urllib.request.Request(api,headers={'User-Agent':'OMCP/0.3 (https://github.com/nmronion-alt/onion-hub)','Accept':'application/json'})
+            try:
+                with urllib.request.urlopen(req,timeout=30) as r: builds=json.load(r)
+            except Exception as e: raise ValueError('Paper download API failed for '+ver+': '+str(e))
             stable=next((x for x in builds if x.get('channel')=='STABLE' and x.get('downloads',{}).get('server:default',{}).get('url')),None)
-            if not stable: raise ValueError('No stable Paper build found for Minecraft '+ver)
+            if not stable: raise ValueError('No stable Paper build found for Minecraft '+ver+'. Check that this Paper version exists.')
             url=stable['downloads']['server:default']['url']
+        elif software=='fabric':
+            headers={'User-Agent':'OMCP/0.3','Accept':'application/json'}
+            try:
+                with urllib.request.urlopen(urllib.request.Request('https://meta.fabricmc.net/v2/versions/loader/'+ver,headers=headers),timeout=30) as r: loaders=json.load(r)
+                with urllib.request.urlopen(urllib.request.Request('https://meta.fabricmc.net/v2/versions/installer',headers=headers),timeout=30) as r: installers=json.load(r)
+            except Exception as e: raise ValueError('Fabric metadata request failed: '+str(e))
+            loader=next((x['loader']['version'] for x in loaders if x.get('loader',{}).get('stable')),None)
+            installer=next((x['version'] for x in installers if x.get('stable')),None)
+            if not loader or not installer: raise ValueError('No stable Fabric loader/installer found for '+ver)
+            url='https://meta.fabricmc.net/v2/versions/loader/'+ver+'/'+loader+'/'+installer+'/server/jar'
         else:
             req=urllib.request.Request('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json',headers={'User-Agent':'OMCP/0.2'})
             with urllib.request.urlopen(req,timeout=30) as r: manifest=json.load(r)
@@ -153,7 +165,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urlparse(self.path).path
         if path=="/api/health": return send(self,200,{"ok":True,"name":"OMCP"})
-        if path=="/api/setup/status": return send(self,200,{"setupRequired":len(load_users())==0})
+        if path=="/api/setup/status": return send(self,200,{"setupRequired":len(load_users())==0,"accountCount":len(load_users())})
         if path=="/" or path=="/index.html":
             try: return send(self,200,WEB.read_bytes(),"text/html; charset=utf-8")
             except Exception: return send(self,404,{"error":"UI file missing"})
@@ -201,9 +213,9 @@ class Handler(BaseHTTPRequestHandler):
                     users[username]={"password":password_hash(password),"role":"admin","created":int(time.time())}
                     save_users(users)
                 else:
-                    canonical=next((u for u in users if u.casefold()==username.casefold()),None)
+                    canonical=next((u for u in users if u.strip().casefold()==username.strip().casefold()),None)
                     record=users.get(canonical) if canonical else None
-                    if not record or not password_ok(password,record): return send(self,401,{"error":"Incorrect username or password. Usernames are case-insensitive; password remains case-sensitive."})
+                    if not record or not password_ok(password,record): return send(self,401,{"error":"Login failed. Check the username and password, and make sure this is the same VPS/data folder where the admin account was created."})
                     username=canonical
                 return send(self,200,{"token":new_session(username),"user":{"username":username,"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
