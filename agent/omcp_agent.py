@@ -178,14 +178,31 @@ def upgrade_server(sid, ver):
         if temp.exists(): temp.unlink()
     return {"updated":True,"version":ver,"software":software,"backup":backup.name}
 
+def java_runtimes():
+    found=[]
+    for base in (Path("/usr/lib/jvm"),Path("/opt/java"),Path("/usr/local/java")):
+        if base.exists():
+            for p in base.glob("*/bin/java"):
+                if p.is_file() and os.access(p,os.X_OK): found.append(str(p.resolve()))
+    system=shutil.which("java")
+    if system and os.path.isfile(system): found.append(os.path.realpath(system))
+    out=[]
+    for p in dict.fromkeys(found):
+        try:
+            v=subprocess.run([p,"-version"],capture_output=True,text=True,timeout=5).stderr
+            m=re.search(r'version "(?:1\\.)?(\\d+)',v)
+            out.append({"path":p,"label":"Java "+(m.group(1) if m else "runtime")+" · "+p})
+        except Exception: pass
+    return out
+
 def start(sid):
     folder=safe_dir(sid); m=json.loads((folder/"omcp.json").read_text())
     p=PROCS.get(sid)
     if p and p.poll() is None: raise ValueError("Already running")
-    java=shutil.which("java")
+    java=m.get("javaPath") or shutil.which("java")
     if not java: raise ValueError("Java not installed")
     log=(folder/"console.log").open("ab",buffering=0)
-    p=subprocess.Popen([java,f"-Xms1G",f"-Xmx{m['memory']}G","-jar",("server.jar" if (folder/"server.jar").exists() else "paper.jar"),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    p=subprocess.Popen([java,f"-Xms{min(1,int(m['memory']))}G",f"-Xmx{m['memory']}G","-jar",("server.jar" if (folder/"server.jar").exists() else "paper.jar"),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     PROCS[sid]=p
     return {"status":"starting","pid":p.pid}
 
@@ -200,7 +217,7 @@ def stop(sid):
 
 def start_tunnel(sid, provider):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-    if provider!="pinggy": raise ValueError("Only Pinggy is connected in this build; Bore and Minekube adapters are not ready yet.")
+    if provider!="pinggy": raise ValueError("Bore and Minekube need provider-specific setup/credentials and are not enabled yet. Select Pinggy for the available adapter.")
     server=PROCS.get(sid)
     if not server or server.poll() is not None: raise ValueError("Start the Minecraft server before starting its TCP tunnel.")
     ssh=shutil.which("ssh")
@@ -211,7 +228,7 @@ def start_tunnel(sid, provider):
         askpass=ROOT/"pinggy-askpass.sh"
         askpass.write_text("#!/bin/sh\nprintf '\\n'\n"); os.chmod(askpass,0o700)
         env=os.environ.copy(); env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
-        cmd=[ssh,"-p","443","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=publickey,password,keyboard-interactive","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(meta["port"]),"tcp@free.pinggy.io"]
+        cmd=[ssh,"-p","443","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password,keyboard-interactive","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:localhost:"+str(meta["port"]),"tcp@free.pinggy.io"]
         proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
         entry={"proc":proc,"provider":"pinggy","lines":[],"address":None,"started":int(time.time())}; TUNNELS[sid]=entry
     def collect():
@@ -247,20 +264,59 @@ def stop_tunnel(sid):
 
 def plugin_search(query):
     query=str(query or "").strip()
-    if not query or len(query)>100: raise ValueError("Enter a plugin name to search")
+    if len(query)>100: raise ValueError("Search query is too long")
+    ua={"User-Agent":"OMCP/0.6 (https://github.com/nmronion-alt/onion-hub)"}
+    results=[]
     facets='[["project_type:plugin"],["categories:paper"]]'
-    url="https://api.modrinth.com/v2/search?query="+quote(query)+"&limit=12&facets="+quote(facets)
-    req=urllib.request.Request(url,headers={"User-Agent":"OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)"})
-    with urllib.request.urlopen(req,timeout=20) as r: data=json.load(r)
-    return {"plugins":[{"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"downloads":x.get("downloads",0)} for x in data.get("hits",[])]}
+    params="limit=10&index=downloads&facets="+quote(facets)
+    if query: params+="&query="+quote(query)
+    req=urllib.request.Request("https://api.modrinth.com/v2/search?"+params,headers=ua)
+    try:
+        with urllib.request.urlopen(req,timeout=18) as r: data=json.load(r)
+        for x in data.get("hits",[]):
+            results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"downloads":x.get("downloads",0),"source":"modrinth"})
+    except Exception as e:
+        if not query: raise ValueError("Modrinth catalogue unavailable: "+str(e))
+    try:
+        endpoint=("https://api.spiget.org/v2/search/resources/"+quote(query,safe="") if query else "https://api.spiget.org/v2/resources")
+        endpoint+=("?size=8&field=name&sort=-downloads" if query else "?size=8&sort=-downloads")
+        req=urllib.request.Request(endpoint,headers=ua)
+        with urllib.request.urlopen(req,timeout=18) as r: items=json.load(r)
+        for x in items if isinstance(items,list) else []:
+            rid=x.get("id")
+            if rid is not None:
+                results.append({"id":str(rid),"name":x.get("name","Spigot resource"),"description":x.get("tag","") or x.get("description",""),"downloads":x.get("downloads",0),"source":"spiget"})
+    except Exception:
+        pass
+    results.sort(key=lambda x:int(x.get("downloads") or 0),reverse=True)
+    return {"plugins":results[:16]}
 
-def install_plugin(sid, project_id):
+def install_plugin(sid, project_id, source="modrinth"):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if meta.get("software","paper")!="paper": raise ValueError("The plugin installer currently supports Paper servers only.")
     proc=PROCS.get(sid)
     if proc and proc.poll() is None: raise ValueError("Stop the server before installing a plugin.")
+    if source=="spiget":
+        if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID")
+        req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id)),headers={"User-Agent":"OMCP/0.6"})
+        with urllib.request.urlopen(req,timeout=20) as r: resource=json.load(r)
+        if resource.get("external"): raise ValueError("This Spigot resource uses an external download and cannot be installed automatically.")
+        req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id))+"/download",headers={"User-Agent":"OMCP/0.6"})
+        with urllib.request.urlopen(req,timeout=60) as r:
+            raw=r.read(50*1024*1024+1)
+            cd=r.headers.get("Content-Disposition","")
+        if len(raw)>50*1024*1024 or not zipfile.is_zipfile(__import__("io").BytesIO(raw)): raise ValueError("Spiget download is not a valid JAR or exceeds 50 MB")
+        match=re.search(r'filename="?([^";]+)',cd)
+        filename=Path(match.group(1) if match else (str(resource.get("name","plugin")).replace(" ","_")+".jar")).name
+        if not filename.lower().endswith(".jar"): filename+=".jar"
+        if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\\.jar",filename): raise ValueError("Unsafe plugin filename")
+        dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
+        if target.exists(): raise ValueError("A plugin with this filename is already installed")
+        target.write_bytes(raw)
+        return {"installed":filename,"source":"spiget","restartRequired":True}
+    if source!="modrinth": raise ValueError("Unknown plugin catalogue")
     if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid plugin project ID")
-    req=urllib.request.Request("https://api.modrinth.com/v2/project/"+project_id+"/version",headers={"User-Agent":"OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)"})
+    req=urllib.request.Request("https://api.modrinth.com/v2/project/"+project_id+"/version",headers={"User-Agent":"OMCP/0.6 (https://github.com/nmronion-alt/onion-hub)"})
     with urllib.request.urlopen(req,timeout=20) as r: versions=json.load(r)
     compatible=[v for v in versions if meta["version"] in v.get("game_versions",[]) and any(x.lower() in ("paper","spigot","purpur","folia") for x in v.get("loaders",[]))]
     if not compatible: raise ValueError("No Paper-compatible release found for Minecraft "+meta["version"])
@@ -374,6 +430,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition",'attachment; filename="'+f.name+'"')
                 self.send_header("Content-Length",str(len(raw))); self.send_header("Cache-Control","no-store")
                 self.end_headers(); self.wfile.write(raw); return
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
+            if x:
+                sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
+                return send(self,200,{"memory":meta.get("memory",2),"javaPath":meta.get("javaPath",""),"runtimes":java_runtimes()})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/search",path)
             if x:
                 sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
@@ -439,7 +499,39 @@ class Handler(BaseHTTPRequestHandler):
                 return send(self,200,stop_tunnel(sid))
             if path=="/api/servers": return send(self,201,{"server":create(d)})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
-            if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId",""))))
+            if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId","")),str(d.get("source","modrinth"))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
+            if x:
+                sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+                proc=PROCS.get(sid)
+                if proc and proc.poll() is None: raise ValueError("Stop the server before changing settings")
+                mem=int(d.get("memory",meta.get("memory",2)))
+                if not 1<=mem<=64: raise ValueError("Memory must be 1-64 GB")
+                java_path=str(d.get("javaPath",""))
+                valid={r["path"] for r in java_runtimes()}
+                if java_path and java_path not in valid: raise ValueError("Selected Java runtime is not installed")
+                meta["memory"]=mem
+                if java_path: meta["javaPath"]=java_path
+                else: meta.pop("javaPath",None)
+                (folder/"omcp.json").write_text(json.dumps(meta,indent=2))
+                return send(self,200,{"saved":True,"memory":mem,"javaPath":meta.get("javaPath","")})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/reinstall",path)
+            if x:
+                sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+                proc=PROCS.get(sid)
+                if proc and proc.poll() is None: raise ValueError("Stop the server before reinstalling")
+                dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
+                backup=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+                with zipfile.ZipFile(backup,"w",zipfile.ZIP_DEFLATED) as z:
+                    for f in folder.rglob("*"):
+                        if f.is_file() and not f.is_symlink(): z.write(f,f.relative_to(folder))
+                temp=folder/"server.jar.new"
+                try:
+                    download_server_jar(meta.get("software","paper"),meta["version"],temp)
+                    os.replace(temp,folder/"server.jar")
+                finally:
+                    if temp.exists(): temp.unlink()
+                return send(self,200,{"reinstalled":True,"backup":backup.name})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/upgrade",path)
             if x:
                 result=upgrade_server(x.group(1),str(d.get("version","")).strip())
