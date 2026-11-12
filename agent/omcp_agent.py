@@ -189,6 +189,22 @@ class Handler(BaseHTTPRequestHandler):
             if x:
                 f=safe_dir(x.group(1))/"console.log"
                 return send(self,200,{"logs":f.read_text(errors="replace")[-20000:] if f.exists() else ""})
+            if path=="/api/backups":
+                dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
+                items=[]
+                for f in sorted(dest.glob("*.zip"),key=lambda p:p.stat().st_mtime,reverse=True):
+                    if f.is_file() and not f.is_symlink():
+                        items.append({"name":f.name,"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
+                return send(self,200,{"backups":items})
+            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}\\.zip)/download",path)
+            if x:
+                f=(ROOT/"backups"/x.group(1)).resolve()
+                if f.parent!=(ROOT/"backups").resolve() or not f.is_file() or f.is_symlink(): raise ValueError("Backup not found")
+                raw=f.read_bytes()
+                self.send_response(200); self.send_header("Content-Type","application/zip")
+                self.send_header("Content-Disposition",'attachment; filename="'+f.name+'"')
+                self.send_header("Content-Length",str(len(raw))); self.send_header("Cache-Control","no-store")
+                self.end_headers(); self.wfile.write(raw); return
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
             if x:
                 folder=safe_dir(x.group(1)); rel=self.headers.get("X-OMCP-Path","")
