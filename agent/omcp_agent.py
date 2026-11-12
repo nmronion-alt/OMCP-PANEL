@@ -547,6 +547,19 @@ class Handler(BaseHTTPRequestHandler):
                 if meta.get("software","paper")!="paper": raise ValueError("Plugin installer currently supports Paper servers only")
                 q=parse_qs(urlparse(self.path).query).get("q",[""])[0]
                 return send(self,200,plugin_search(q))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/download",path)
+            if x:
+                folder=safe_dir(x.group(1)); rel=parse_qs(urlparse(self.path).query).get("path",[""])[0]
+                f=server_path(folder,rel)
+                if not f.is_file() or f.is_symlink(): raise ValueError("Regular file not found")
+                size=f.stat().st_size
+                self.send_response(200); self.send_header("Content-Type","application/octet-stream")
+                self.send_header("Content-Disposition",'attachment; filename="'+f.name.replace('"','')+'"')
+                self.send_header("Content-Length",str(size)); self.send_header("Cache-Control","no-store")
+                self.end_headers()
+                with f.open("rb") as stream:
+                    shutil.copyfileobj(stream,self.wfile)
+                return
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
             if x:
                 folder=safe_dir(x.group(1)); rel=self.headers.get("X-OMCP-Path","")
