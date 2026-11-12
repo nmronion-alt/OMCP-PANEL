@@ -128,6 +128,56 @@ def create(d):
         shutil.rmtree(folder,ignore_errors=True)
         raise
 
+def download_server_jar(software, ver, destination):
+    headers={"User-Agent":"OMCP/0.4 (https://github.com/nmronion-alt/onion-hub)","Accept":"application/json"}
+    if software=="paper":
+        api="https://fill.papermc.io/v3/projects/paper/versions/"+ver+"/builds?channel=STABLE&limit=1"
+        with urllib.request.urlopen(urllib.request.Request(api,headers=headers),timeout=30) as r: builds=json.load(r)
+        stable=next((x for x in builds if x.get("channel")=="STABLE" and x.get("downloads",{}).get("server:default",{}).get("url")),None)
+        if not stable: raise ValueError("No stable Paper build found for Minecraft "+ver)
+        url=stable["downloads"]["server:default"]["url"]
+    elif software=="fabric":
+        with urllib.request.urlopen(urllib.request.Request("https://meta.fabricmc.net/v2/versions/loader/"+ver,headers=headers),timeout=30) as r: loaders=json.load(r)
+        with urllib.request.urlopen(urllib.request.Request("https://meta.fabricmc.net/v2/versions/installer",headers=headers),timeout=30) as r: installers=json.load(r)
+        loader=next((x["loader"]["version"] for x in loaders if x.get("loader",{}).get("stable")),None)
+        installer=next((x["version"] for x in installers if x.get("stable")),None)
+        if not loader or not installer: raise ValueError("No stable Fabric loader found for "+ver)
+        url="https://meta.fabricmc.net/v2/versions/loader/"+ver+"/"+loader+"/"+installer+"/server/jar"
+    elif software=="vanilla":
+        with urllib.request.urlopen(urllib.request.Request("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",headers=headers),timeout=30) as r: manifest=json.load(r)
+        item=next((x for x in manifest["versions"] if x["id"]==ver and x["type"] in ("release","snapshot")),None)
+        if not item: raise ValueError("Minecraft version not found in official manifest")
+        with urllib.request.urlopen(urllib.request.Request(item["url"],headers=headers),timeout=30) as r: meta=json.load(r)
+        url=meta.get("downloads",{}).get("server",{}).get("url")
+        if not url: raise ValueError("No official Vanilla server download for "+ver)
+    else: raise ValueError("Unsupported server software")
+    req=urllib.request.Request(url,headers={"User-Agent":headers["User-Agent"]})
+    with urllib.request.urlopen(req,timeout=180) as r, destination.open("wb") as out: shutil.copyfileobj(r,out)
+    if destination.stat().st_size<100000 or not zipfile.is_zipfile(destination):
+        destination.unlink(missing_ok=True)
+        raise ValueError("Downloaded server jar failed validation")
+
+def upgrade_server(sid, ver):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?",ver): raise ValueError("Invalid Minecraft version")
+    proc=PROCS.get(sid)
+    if proc and proc.poll() is None: raise ValueError("Stop the server before changing its version")
+    software=meta.get("software","paper")
+    dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
+    backup=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+    with zipfile.ZipFile(backup,"w",zipfile.ZIP_DEFLATED) as z:
+        for f in folder.rglob("*"):
+            if f.is_file() and not f.is_symlink(): z.write(f,f.relative_to(folder))
+    temp=folder/"server.jar.new"
+    try:
+        download_server_jar(software,ver,temp)
+        os.replace(temp,folder/"server.jar")
+        meta["version"]=ver
+        (folder/"omcp.json").write_text(json.dumps(meta,indent=2))
+    finally:
+        if temp.exists(): temp.unlink()
+    return {"updated":True,"version":ver,"software":software,"backup":backup.name}
+
 def start(sid):
     folder=safe_dir(sid); m=json.loads((folder/"omcp.json").read_text())
     p=PROCS.get(sid)
@@ -346,6 +396,10 @@ class Handler(BaseHTTPRequestHandler):
                 if action=="start": return send(self,200,start_tunnel(sid,str(d.get("provider","pinggy"))))
                 return send(self,200,stop_tunnel(sid))
             if path=="/api/servers": return send(self,201,{"server":create(d)})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/upgrade",path)
+            if x:
+                result=upgrade_server(x.group(1),str(d.get("version","")).strip())
+                return send(self,200,result)
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
                 sid,act=x.groups()
