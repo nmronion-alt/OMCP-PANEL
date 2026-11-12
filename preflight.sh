@@ -2,12 +2,12 @@
 # ONION HUB preflight — read-only checks. No packages, services, firewall or game data changed.
 set -Eeuo pipefail
 
-GREEN=$'\\033[1;32m'; YELLOW=$'\\033[1;33m'; RED=$'\\033[1;31m'; CYAN=$'\\033[1;36m'; RESET=$'\\033[0m'
+GREEN=$'\033[1;32m'; YELLOW=$'\033[1;33m'; RED=$'\033[1;31m'; CYAN=$'\033[1;36m'; RESET=$'\033[0m'
 PASS=0; WARN=0; BLOCK=0
-pass(){ printf ' %b[PASS]%b %s\\n' "$GREEN" "$RESET" "$*"; PASS=$((PASS+1)); }
-warn(){ printf ' %b[WARN]%b %s\\n' "$YELLOW" "$RESET" "$*"; WARN=$((WARN+1)); }
-block(){ printf ' %b[BLOCK]%b %s\\n' "$RED" "$RESET" "$*"; BLOCK=$((BLOCK+1)); }
-section(){ printf '\\n%b%s%b\\n' "$CYAN" "$*" "$RESET"; }
+pass(){ printf ' %b[PASS]%b %s\n' "$GREEN" "$RESET" "$*"; PASS=$((PASS+1)); }
+warn(){ printf ' %b[WARN]%b %s\n' "$YELLOW" "$RESET" "$*"; WARN=$((WARN+1)); }
+block(){ printf ' %b[BLOCK]%b %s\n' "$RED" "$RESET" "$*"; BLOCK=$((BLOCK+1)); }
+section(){ printf '\n%b%s%b\n' "$CYAN" "$*" "$RESET"; }
 
 os_id=unknown; os_name=unknown
 if [[ -r /etc/os-release ]]; then . /etc/os-release; os_id="${ID:-unknown}"; os_name="${PRETTY_NAME:-unknown}"; fi
@@ -21,10 +21,10 @@ cgroup="$(cat /proc/1/cgroup 2>/dev/null || true)"
 in_container=false
 if grep -Eqi 'docker|containerd|kubepods|lxc|podman' <<<"$cgroup" || [[ -f /.dockerenv ]] || [[ -f /run/.containerenv ]]; then in_container=true; fi
 
-printf '%b\\n' '=============================================='
-printf '%b\\n' '             ONION HUB PREFLIGHT'
-printf '%b\\n' '=============================================='
-printf 'OS: %s\\nCPU: %s logical cores\\nRAM: %s GiB\\nFree disk on /: %s GiB\\nPID 1: %s\\nContainer detected: %s\\n' "$os_name" "$cpu_count" "$ram_gib" "$disk_gib" "${pid1:-unknown}" "$in_container"
+printf '%b\n' '=============================================='
+printf '%b\n' '             ONION HUB PREFLIGHT'
+printf '%b\n' '=============================================='
+printf 'OS: %s\nCPU: %s logical cores\nRAM: %s GiB\nFree disk on /: %s GiB\nPID 1: %s\nContainer detected: %s\n' "$os_name" "$cpu_count" "$ram_gib" "$disk_gib" "${pid1:-unknown}" "$in_container"
 
 section "1. Base host"
 if [[ "$os_id" == ubuntu || "$os_id" == debian ]]; then pass "Ubuntu/Debian detected"; else block "This build targets Ubuntu/Debian only"; fi
@@ -47,20 +47,20 @@ if command -v curl >/dev/null 2>&1; then
   if [[ -n "$public4" ]]; then pass "Outbound IPv4: $public4"; else warn "Outbound IPv4 lookup unavailable"; fi
 else warn "curl unavailable; public-IP lookup skipped"; fi
 if command -v ip >/dev/null 2>&1; then
-  printf 'Interfaces:\\n'; ip -brief address 2>/dev/null || true
-  printf 'Default route:\\n'; ip route show default 2>/dev/null || true
+  printf 'Interfaces:\n'; ip -brief address 2>/dev/null || true
+  printf 'Default route:\n'; ip route show default 2>/dev/null || true
 fi
 warn "Outbound IP detection does not prove inbound reachability; inbound ports need independent tests."
 warn "Without a public/inbound route, Panel HTTP, Wings API/SFTP and Minecraft game traffic need separate supported routing paths."
 
 section "Result"
-printf 'PASS: %d  WARN: %d  BLOCK: %d\\n' "$PASS" "$WARN" "$BLOCK"
+printf 'PASS: %d  WARN: %d  BLOCK: %d\n' "$PASS" "$WARN" "$BLOCK"
 if (( BLOCK > 0 )); then
-  printf '%bBASE HOST BLOCKED%b — no installation was attempted.\\n' "$RED" "$RESET"
+  printf '%bBASE HOST BLOCKED%b — no installation was attempted.\n' "$RED" "$RESET"
   exit 2
 elif (( WARN > 0 )); then
-  printf '%bCONDITIONAL%b — some Wings/persistence capabilities need attention.\\n' "$YELLOW" "$RESET"
+  printf '%bCONDITIONAL%b — some Wings/persistence capabilities need attention.\n' "$YELLOW" "$RESET"
   exit 1
 else
-  printf '%bPREFLIGHT PASSED%b — this does not prove inbound routing or a successful deployment.\\n' "$GREEN" "$RESET"
+  printf '%bPREFLIGHT PASSED%b — this does not prove inbound routing or a successful deployment.\n' "$GREEN" "$RESET"
 fi
