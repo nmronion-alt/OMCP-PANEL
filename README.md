@@ -11,7 +11,7 @@ OMCP is a standalone Minecraft Java server panel for Linux VPS hosts, including 
 - Basic text file browser/editor, ZIP backups, server list and Linux memory/CPU-thread metrics.
 - Local API binds to `127.0.0.1:8765` by default.
 
-## One-command installer (Ubuntu/Debian with systemd)
+## One-command installer (Ubuntu/Debian, systemd or no-systemd)
 
 Review the installer before running it. On a fresh supported VPS:
 
@@ -26,10 +26,10 @@ Or, after reviewing the script, run it directly:
 curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/main/install-omcp.sh | sudo bash
 ```
 
-The installer installs Python 3 and OpenJDK 21, creates a dedicated unprivileged `omcp` Linux account, downloads the agent/UI and enables a systemd service. Retrieve the first-run Admin Key with:
+The installer installs Python 3 and OpenJDK 21, creates a dedicated unprivileged `omcp` Linux account and downloads the agent/UI. On systemd VPS hosts it enables a systemd service; in Cloud Shell/container environments without systemd it starts a background process and writes its log to `/var/lib/omcp/agent.log`. Retrieve the first-run Admin Key with:
 
 ```bash
-sudo journalctl -u omcp -n 80 --no-pager
+sudo journalctl -u omcp -n 80 --no-pager  # systemd VPS\nsudo cat /var/lib/omcp/agent.log          # no-systemd Cloud Shell/container
 ```
 
 Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listener.
@@ -38,7 +38,7 @@ Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listen
 
 For remote web access, configure Cloudflare Tunnel to `http://localhost:8765` and protect the hostname with Cloudflare Access. Do not expose port 8765 directly or publish an unauthenticated tunnel. The generated OMCP Admin Key is still required for management actions.
 
-Cloudflare's ordinary web tunnel does not relay arbitrary Minecraft Java TCP traffic. Player connectivity requires a separate TCP relay/provider. The installer does not configure a game relay.
+Cloudflare's ordinary web tunnel does not relay arbitrary Minecraft Java TCP traffic. Player connectivity requires a separate TCP relay/provider. The installer does not configure a game relay. Cloud Shell is ephemeral: processes and files may disappear when the session ends, so it is for testing rather than persistent hosting.
 
 ## MVP limitations
 
