@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Minecraft Server Panel</title>
+<style>
+:root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#f3efff;background:#0d0b13;--panel:#171320;--line:#30283d;--muted:#a79bb8;--accent:#a879f5;--green:#64d99a;--red:#ff777f}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 20% 0%,#241638 0,transparent 42%),#0d0b13}
+button,input{font:inherit}.layout{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:24px 16px;background:#110e19}.brand{font-weight:800;letter-spacing:.04em;font-size:17px;padding:8px 10px 28px}.brand small{display:block;color:var(--muted);font-weight:500;font-size:11px;margin-top:5px;letter-spacing:.12em}.nav{display:grid;gap:7px}.nav button{border:0;background:transparent;color:#c8bed6;text-align:left;padding:12px;border-radius:10px;cursor:pointer}.nav button.active,.nav button:hover{background:#2a2038;color:#fff}.nav button:disabled{opacity:.4;cursor:not-allowed}.main{padding:30px;max-width:1200px;width:100%;margin:auto}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:26px}.eyebrow{color:var(--muted);font-size:12px;letter-spacing:.14em;text-transform:uppercase}h1{font-size:26px;margin:6px 0 0}.card{background:linear-gradient(145deg,#1b1625,#15111d);border:1px solid var(--line);border-radius:16px;padding:20px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}.metric{font-size:28px;font-weight:750;margin-top:9px}.muted{color:var(--muted)}.row{display:flex;justify-content:space-between;align-items:center;gap:12px}.pill{font-size:12px;padding:5px 9px;border-radius:99px;background:#252033;color:#c9b8e6}.pill.ok{color:var(--green);background:#153326}.pill.bad{color:var(--red);background:#351b23}.btn{border:1px solid #594276;background:#2b203b;color:#fff;padding:9px 13px;border-radius:9px;cursor:pointer}.btn:hover{background:#3a2a50}.btn:disabled{opacity:.45;cursor:not-allowed}.server{border-top:1px solid var(--line);padding:15px 0}.server:first-child{border-top:0}.server-name{font-weight:650}.actions{display:flex;gap:7px;flex-wrap:wrap}.login{max-width:430px;margin:12vh auto;padding:28px}.login input{width:100%;margin:14px 0;padding:12px;background:#0f0c15;color:#fff;border:1px solid var(--line);border-radius:9px}.notice{margin-top:15px;color:var(--muted);font-size:13px;line-height:1.55}.hidden{display:none!important}pre{white-space:pre-wrap;overflow:auto;background:#0b0910;padding:15px;border-radius:10px;color:#d7cde4;max-height:380px}.empty{padding:26px 8px;text-align:center;color:var(--muted)}@media(max-width:760px){.layout{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--line);padding:12px}.brand{padding:6px 8px 12px}.nav{grid-template-columns:repeat(4,1fr)}.nav button{font-size:12px;text-align:center;padding:9px 4px}.main{padding:18px}.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<section id="login" class="card login">
+ <div class="eyebrow">Local administrator access</div><h1>Minecraft Server Panel</h1>
+ <p class="muted">Enter the panel access token configured by the host administrator.</p>
+ <input id="token" type="password" autocomplete="current-password" placeholder="Panel access token">
+ <button class="btn" id="loginBtn">Connect</button><div id="loginError" class="notice"></div>
+ <p class="notice">This is a single-admin panel. Keep the token private. Do not expose an unauthenticated console to the internet.</p>
+</section>
+<div id="app" class="layout hidden">
+ <aside class="side">
+  <div class="brand">MINECRAFT PANEL<small>TEMPORARY SERVER CONTROL</small></div>
+  <nav class="nav">
+   <button class="active" data-page="overview">Overview</button>
+   <button data-page="servers">Servers</button>
+   <button disabled title="Coming in the next development stage">Files</button>
+   <button disabled title="Coming in the next development stage">Plugins</button>
+   <button disabled title="Coming in the next development stage">Mods</button>
+   <button disabled title="Coming in the next development stage">Versions</button>
+   <button disabled title="Coming in the next development stage">Routing</button>
+   <button disabled title="Coming in the next development stage">Settings</button>
+  </nav>
+ </aside>
+ <main class="main">
+  <div class="top"><div><div class="eyebrow">Server management</div><h1 id="pageTitle">Overview</h1></div><button class="btn" id="refresh">Refresh</button></div>
+  <section id="overviewPage">
+   <div class="grid">
+    <div class="card"><div class="muted">Docker connection</div><div class="metric" id="dockerState">—</div></div>
+    <div class="card"><div class="muted">Managed servers</div><div class="metric" id="serverCount">—</div></div>
+    <div class="card"><div class="muted">Running servers</div><div class="metric" id="runningCount">—</div></div>
+   </div>
+   <div class="card"><div class="row"><strong>Recent servers</strong><span class="pill" id="lastUpdated">Not loaded</span></div><div id="overviewServers" class="empty">Connect to load server information.</div></div>
+  </section>
+  <section id="serversPage" class="card hidden"><div class="row"><strong>Managed Minecraft containers</strong><span class="pill">Docker</span></div><div id="serversList" class="empty">No data loaded.</div></section>
+  <section class="card" style="margin-top:16px"><div class="muted">Development status</div><p class="notice">The first foundation stage includes authenticated Docker status, managed-container listing, start/stop/restart and recent logs. File manager, server creation, plugin/mod installers, version switching and routing integrations are not enabled yet.</p></section>
+ </main>
+</div>
+<script>
+let accessToken="";
+const $=id=>document.getElementById(id);
+async function api(path,options={}){const response=await fetch(path,{...options,headers:{...(options.headers||{}),Authorization:"Bearer "+accessToken,"Content-Type":"application/json"}});let body={};try{body=await response.json()}catch{}if(!response.ok)throw new Error(body.detail||("HTTP "+response.status));return body}
+function showError(message){$("loginError").textContent=message}
+async function connect(){accessToken=$("token").value.trim();if(!accessToken){showError("Enter the access token.");return}try{await api("/api/status");$("login").classList.add("hidden");$("app").classList.remove("hidden");await refresh()}catch(e){showError(e.message);accessToken=""}}
+function serverMarkup(s){const state=s.status==="running"?"ok":"bad";return '<div class="server"><div class="row"><div><div class="server-name"></div><div class="muted"></div></div><div class="actions"><span class="pill '+state+'">'+s.status+'</span><button class="btn" data-action="start" data-id="'+s.id+'">Start</button><button class="btn" data-action="stop" data-id="'+s.id+'">Stop</button><button class="btn" data-action="restart" data-id="'+s.id+'">Restart</button><button class="btn" data-action="logs" data-id="'+s.id+'">Logs</button></div></div></div>'}
+function renderServers(items){const target=$("serversList");target.innerHTML=items.length?items.map(serverMarkup).join(""):'<div class="empty">No managed servers yet. Server creation will be added in the next stage.</div>';const overview=$("overviewServers");overview.innerHTML=items.length?items.slice(0,5).map(s=>'<div class="server row"><span>'+escapeHtml(s.name)+'</span><span class="pill '+(s.status==="running"?"ok":"bad")+'">'+escapeHtml(s.status)+'</span></div>').join(""):'<div class="empty">No managed servers yet.</div>';items.forEach(s=>{const el=[...target.querySelectorAll(".server")].find(x=>x.querySelector('[data-id="'+s.id+'"]'));if(el){el.querySelector(".server-name").textContent=s.name;el.querySelector(".muted").textContent=s.image+" · "+s.id}})}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+async function refresh(){try{const [status,servers]=await Promise.all([api("/api/status"),api("/api/servers")]);$("dockerState").textContent=status.docker;$("serverCount").textContent=status.managed_servers;$("runningCount").textContent=status.running_servers;$("lastUpdated").textContent="Updated "+new Date().toLocaleTimeString();renderServers(servers.servers)}catch(e){$("dockerState").textContent="Error";$("overviewServers").textContent=e.message}}
+$("loginBtn").addEventListener("click",connect);$("token").addEventListener("keydown",e=>{if(e.key==="Enter")connect()});$("refresh").addEventListener("click",refresh);
+document.querySelectorAll("[data-page]").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b===btn));const page=btn.dataset.page;$("pageTitle").textContent=page==="overview"?"Overview":"Servers";$("overviewPage").classList.toggle("hidden",page!=="overview");$("serversPage").classList.toggle("hidden",page!=="servers")}));
+document.addEventListener("click",async e=>{const btn=e.target.closest("[data-action]");if(!btn)return;const {action,id}=btn.dataset;try{if(action==="logs"){const result=await api("/api/servers/"+id+"/logs");alert(result.logs||"(No logs yet)")}else{await api("/api/servers/"+id+"/"+action,{method:"POST"});await refresh()}}catch(err){alert(err.message)}});
+</script>
+</body>
+</html>
