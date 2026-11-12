@@ -47,7 +47,7 @@ def metadata(directory:Path)->dict:
     except (OSError,ValueError): raise HTTPException(500,"Server metadata is missing or damaged.")
 def save_meta(directory:Path,data:dict):
     temp=directory/"omcp.json.tmp"; temp.write_text(json.dumps(data,indent=2)); temp.replace(directory/"omcp.json")
-def allocate_port(exclude:set[int]|None=None)->int:
+def allocate_port(exclude:Optional[set]=None)->int:
     excluded=exclude or set()
     for _ in range(20):
         with socket.socket() as sock:
@@ -198,6 +198,7 @@ def list_files(server_id:str,path:str="",_:bool=Depends(require_admin)):
 @app.get("/api/servers/{server_id}/file")
 def read_file(server_id:str,path:str,_:bool=Depends(require_admin)):
     target=resolve_file(server_dir(server_id),path)
+    if target.name=="omcp.json": raise HTTPException(403,"Protected OMCP metadata.")
     if not target.is_file() or target.stat().st_size>2_000_000: raise HTTPException(400,"File is missing, not regular, or larger than 2 MB.")
     return {"path":path,"content":target.read_text(errors="replace")}
 @app.put("/api/servers/{server_id}/file")
