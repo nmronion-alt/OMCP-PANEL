@@ -600,9 +600,15 @@ def minekube_info(sid):
     logs=folder/"console.log"
     raw=logs.read_text(errors="replace")[-100000:] if logs.exists() else ""
     match=re.search(r"(?:Your public address|Public address|Endpoint address):\s*([a-z0-9-]+\.play\.minekube\.net)",raw,re.I)
-    address=match.group(1) if match else ((state.get("endpoint") or "")+".play.minekube.net" if state.get("endpoint") else None)
+    configured=state.get("endpoint","")
+    config_file=folder/"plugins"/"connect"/"config.yml"
+    if not configured and config_file.exists():
+        found=re.search(r"(?m)^endpoint:\s*([a-z0-9-]{2,32})\s*$",config_file.read_text(errors="replace"))
+        if found: configured=found.group(1)
+    active=bool(re.search(r"Enabling connect",raw,re.I))
+    address=match.group(1) if match else (configured+".play.minekube.net" if configured and active else None)
     installed=plugin.is_file()
-    return {"status":"running" if address and server_running(sid) else ("installed" if installed else "stopped"),"provider":"minekube","address":address,"installed":installed,"restartRequired":installed and not bool(address) and not server_running(sid),"logs":raw[-5000:] if raw else "Install the Connect plugin, then start/restart this server. Minekube will print its public address in the console."}
+    return {"status":"running" if address and server_running(sid) else ("installed" if installed else "stopped"),"provider":"minekube","address":address,"installed":installed,"restartRequired":installed and not address and not server_running(sid),"logs":raw[-5000:] if raw else "Install the Connect plugin, then start/restart this server. Minekube will print its public address in the console."}
 
 def start_tunnel(sid, provider):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text()); port=int(meta.get("port",25565))
@@ -634,7 +640,7 @@ def start_tunnel(sid, provider):
                 time.sleep(0.2); detail="\n".join(entry["lines"][-30:]) or "Bore exited without returning a port."
                 raise ValueError("Bore tunnel exited (code "+str(proc.returncode)+"). "+detail[-1600:])
             time.sleep(0.2)
-        return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"\\n".join(entry["lines"][-20:])}
+        return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"\n".join(entry["lines"][-20:])}
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
     port=int(meta.get("port",25565))
