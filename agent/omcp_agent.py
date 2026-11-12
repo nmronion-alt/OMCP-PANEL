@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, zipfile, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -14,7 +14,7 @@ SESSIONS={}
 SESSION_LOCK=threading.RLock()
 SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
-TUNNELS={}; TUNNEL_LOCK=threading.RLock()
+TUNNELS={}; TUNNEL_LOCK=threading.RLock(); METRIC_PREV={}
 
 def load_users():
     if not USERSFILE.exists(): return {}
@@ -192,6 +192,40 @@ def stop_tunnel(sid):
             except subprocess.TimeoutExpired: p.kill()
         return {"status":"stopped"}
 
+def server_metrics(sid):
+    folder=safe_dir(sid); proc=PROCS.get(sid)
+    mem=0
+    if proc and proc.poll() is None:
+        try:
+            for line in Path("/proc/%s/status"%proc.pid).read_text().splitlines():
+                if line.startswith("VmRSS:"): mem=int(line.split()[1])*1024; break
+        except Exception: pass
+    usage=shutil.disk_usage(folder)
+    net_in=net_out=0
+    try:
+        for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
+            name,values=line.split(":",1); vals=values.split()
+            if name.strip()!="lo": net_in+=int(vals[0]); net_out+=int(vals[8])
+    except Exception: pass
+    now=time.time(); prev=METRIC_PREV.get(sid); in_rate=out_rate=0
+    if prev:
+        dt=max(.1,now-prev[0]); in_rate=max(0,int((net_in-prev[1])/dt)); out_rate=max(0,int((net_out-prev[2])/dt))
+    METRIC_PREV[sid]=(now,net_in,net_out)
+    try: cpu=min(100,round(os.getloadavg()[0]*100/max(1,os.cpu_count() or 1),1))
+    except Exception: cpu=0
+    return {"cpuLoad":cpu,"memoryUsed":mem,"diskUsed":usage.used,"diskTotal":usage.total,"networkInRate":in_rate,"networkOutRate":out_rate,"status":"running" if proc and proc.poll() is None else "stopped"}
+
+def server_path(folder, rel):
+    rel=str(rel or "")
+    if not rel or rel.startswith("/") or "\\" in rel or any(x in ("",".","..") for x in rel.split("/")):
+        raise ValueError("Invalid relative path")
+    target=folder/rel; cur=folder
+    for part in rel.split("/"):
+        cur=cur/part
+        if cur.is_symlink(): raise ValueError("Symlinks are not allowed")
+    if folder.resolve() not in target.resolve().parents: raise ValueError("Path outside server")
+    return target
+
 def body(h):
     n=int(h.headers.get("Content-Length","0"))
     if n>1048576: raise ValueError("Request too large")
@@ -232,6 +266,8 @@ class Handler(BaseHTTPRequestHandler):
                 return send(self,200,{"memoryTotal":total,"memoryUsed":used,"cpuCount":os.cpu_count() or 1})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/tunnel",path)
             if x: return send(self,200,tunnel_info(x.group(1)))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/metrics",path)
+            if x: return send(self,200,server_metrics(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/logs",path)
             if x:
                 f=safe_dir(x.group(1))/"console.log"
@@ -329,6 +365,25 @@ class Handler(BaseHTTPRequestHandler):
                             if f.is_file() and not f.is_symlink(): z.write(f,f.relative_to(folder))
                     result={"backup":zpath.name,"bytes":zpath.stat().st_size}
                 return send(self,200,result)
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(mkdir|upload)",path)
+            if x:
+                sid,kind=x.groups(); folder=safe_dir(sid); target=server_path(folder,d.get("path",""))
+                if kind=="mkdir":
+                    target.mkdir(parents=True,exist_ok=True)
+                    return send(self,200,{"created":True,"path":str(target.relative_to(folder))})
+                chunk=base64.b64decode(str(d.get("chunk","")),validate=True)
+                if len(chunk)>600000: raise ValueError("Upload chunk too large")
+                offset=int(d.get("offset",0))
+                target.parent.mkdir(parents=True,exist_ok=True)
+                if target.is_symlink(): raise ValueError("Symlink blocked")
+                if d.get("truncate"):
+                    if offset!=0: raise ValueError("First upload chunk must start at offset 0")
+                    mode="wb"
+                else:
+                    if not target.exists() or target.stat().st_size!=offset: raise ValueError("Upload offset mismatch; restart the upload")
+                    mode="ab"
+                with target.open(mode) as out: out.write(chunk)
+                return send(self,200,{"uploaded":len(chunk),"size":target.stat().st_size})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
             if x:
                 folder=safe_dir(x.group(1)); f=(folder/str(d.get("path",""))).resolve()
