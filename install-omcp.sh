@@ -7,7 +7,7 @@ DATA="/var/lib/omcp"
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
 if ! command -v apt-get >/dev/null || ! command -v systemctl >/dev/null; then echo "Supported target: Ubuntu/Debian with systemd."; exit 1; fi
 apt-get update
-apt-get install -y python3 curl ca-certificates
+apt-get install -y python3 curl ca-certificates openjdk-21-jre-headless
 id omcp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --create-home --shell /usr/sbin/nologin omcp
 install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
