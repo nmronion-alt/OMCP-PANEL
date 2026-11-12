@@ -463,16 +463,41 @@ def start(sid):
     return {"status":"starting","pid":p.pid}
 
 def send_console_command(sid, command):
-    fifo=safe_dir(sid)/"console.stdin"
-    if fifo.exists() and fifo.is_fifo():
-        fd=os.open(fifo,os.O_WRONLY|os.O_NONBLOCK)
-        try: os.write(fd,command.encode("utf-8")+b"\n")
-        finally: os.close(fd)
-        return True
+    folder=safe_dir(sid)
+    payload=command.encode("utf-8")+b"\n"
+    fifo=folder/"console.stdin"
+    # Preferred path: the named FIFO created before the JVM starts.
+    try:
+        if fifo.exists() and fifo.is_fifo():
+            fd=os.open(str(fifo),os.O_WRONLY|os.O_NONBLOCK)
+            try:
+                os.write(fd,payload)
+                return True
+            finally:
+                os.close(fd)
+    except OSError:
+        # A stale or unlinked FIFO can remain attached to the running JVM.
+        pass
+    # Recovery path: write to the JVM's inherited stdin descriptor. This also
+    # works if console.stdin was removed after the process started.
+    for pid in server_processes(sid):
+        proc_fd=Path("/proc")/str(pid)/"fd"/"0"
+        try:
+            fd=os.open(str(proc_fd),os.O_WRONLY|os.O_NONBLOCK)
+            try:
+                os.write(fd,payload)
+                return True
+            finally:
+                os.close(fd)
+        except OSError:
+            continue
     p=PROCS.get(sid)
     if p and p.poll() is None and p.stdin:
-        p.stdin.write(command.encode("utf-8")+b"\n"); p.stdin.flush()
-        return True
+        try:
+            p.stdin.write(payload); p.stdin.flush()
+            return True
+        except (BrokenPipeError,OSError,ValueError):
+            pass
     return False
 
 def stop(sid):
