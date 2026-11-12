@@ -251,12 +251,18 @@ def start(sid):
     memory=int(m.get("memory",2))
     if memory<1 or memory>physical_ram_gb(): raise ValueError("Saved RAM setting is invalid for this host. Open Server Settings and save a valid memory limit.")
     log_path=folder/"console.log"
+    fifo_path=folder/"console.stdin"
+    if fifo_path.exists() and not fifo_path.is_fifo(): fifo_path.unlink()
+    if not fifo_path.exists(): os.mkfifo(fifo_path,0o600)
+    fifo_fd=os.open(fifo_path,os.O_RDWR|os.O_NONBLOCK)
     try:
         with log_path.open("wb",buffering=0) as log:
             log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | JAR: "+jar.name+"\n").encode())
-            p=subprocess.Popen([java,f"-Xms{min(1,memory)}G",f"-Xmx{memory}G","-jar",str(jar),"nogui"],cwd=folder,stdin=subprocess.PIPE,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+            p=subprocess.Popen([java,f"-Xms{min(1,memory)}G",f"-Xmx{memory}G","-jar",str(jar),"nogui"],cwd=folder,stdin=fifo_fd,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     except Exception as e:
         raise ValueError("Could not launch Minecraft: "+str(e))
+    finally:
+        os.close(fifo_fd)
     PROCS[sid]=p
     time.sleep(0.25)
     if p.poll() is not None:
@@ -264,20 +270,33 @@ def start(sid):
         raise ValueError("Minecraft exited during startup (exit "+str(p.returncode)+"). Console: "+tail[-1200:])
     return {"status":"starting","pid":p.pid}
 
+def send_console_command(sid, command):
+    fifo=safe_dir(sid)/"console.stdin"
+    if fifo.exists() and fifo.is_fifo():
+        fd=os.open(fifo,os.O_WRONLY|os.O_NONBLOCK)
+        try: os.write(fd,command.encode("utf-8")+b"\n")
+        finally: os.close(fd)
+        return True
+    p=PROCS.get(sid)
+    if p and p.poll() is None and p.stdin:
+        p.stdin.write(command.encode("utf-8")+b"\n"); p.stdin.flush()
+        return True
+    return False
+
 def stop(sid):
     p=PROCS.get(sid)
     tracked=p is not None and p.poll() is None
     pids=server_processes(sid)
     if not pids:
         (safe_dir(sid)/"console.log").unlink(missing_ok=True)
+        (safe_dir(sid)/"console.stdin").unlink(missing_ok=True)
         return {"status":"stopped"}
     try:
-        if tracked and p.stdin:
-            p.stdin.write(b"stop\n"); p.stdin.flush()
+        sent=send_console_command(sid,"stop")
+        if tracked:
             try: p.wait(timeout=45)
             except subprocess.TimeoutExpired: p.terminate()
-        else:
-            # A post-restart orphan has no console pipe; SIGTERM runs JVM shutdown hooks.
+        elif not sent:
             for pid in pids:
                 try: os.kill(pid, __import__("signal").SIGTERM)
                 except ProcessLookupError: pass
@@ -293,6 +312,7 @@ def stop(sid):
             time.sleep(0.5)
         if server_processes(sid): raise ValueError("Minecraft process is still present; check server state before starting again.")
         (safe_dir(sid)/"console.log").unlink(missing_ok=True)
+        (safe_dir(sid)/"console.stdin").unlink(missing_ok=True)
         return {"status":"stopped"}
     except Exception as e:
         if isinstance(e,ValueError): raise
@@ -524,7 +544,7 @@ class Handler(BaseHTTPRequestHandler):
             if x:
                 sid=x.group(1); f=safe_dir(sid)/"console.log"
                 online=server_running(sid)
-                return send(self,200,{"status":"running" if online else "offline","logs":f.read_text(errors="replace")[-20000:] if online and f.exists() else ""})
+                return send(self,200,{"status":"running" if online else "offline","logs":f.read_text(errors="replace")[-80000:] if online and f.exists() else ""})
             if path=="/api/backups":
                 dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
                 items=[]
@@ -571,7 +591,7 @@ class Handler(BaseHTTPRequestHandler):
                 f=(folder/rel).resolve()
                 if folder not in f.parents and f!=folder: raise ValueError("Path outside server")
                 if f.is_symlink(): raise ValueError("Symlink blocked")
-                if f.is_dir(): return send(self,200,{"entries":[{"name":a.name,"directory":a.is_dir(),"size":a.stat().st_size if a.is_file() else 0} for a in sorted(f.iterdir()) if not a.is_symlink()]})
+                if f.is_dir(): return send(self,200,{"entries":[{"name":a.name,"directory":a.is_dir(),"size":a.stat().st_size if a.is_file() else 0} for a in sorted(f.iterdir(),key=lambda p:(not p.is_dir(),p.name.casefold())) if not a.is_symlink()]})
                 if f.is_file() and f.stat().st_size<500000: return send(self,200,{"content":f.read_text(errors="replace")})
                 raise ValueError("File not found or too large")
             return send(self,404,{"error":"Not found"})
@@ -669,10 +689,11 @@ class Handler(BaseHTTPRequestHandler):
                 elif act=="stop": result=stop(sid)
                 elif act=="restart": stop(sid); result=start(sid)
                 elif act=="command":
-                    p=PROCS.get(sid); cmd=str(d.get("command",""))
-                    if not p or p.poll() is not None: raise ValueError("Server stopped")
+                    cmd=str(d.get("command",""))
+                    if not server_running(sid): raise ValueError("Server stopped")
                     if not cmd or len(cmd)>500 or "\n" in cmd or "\r" in cmd: raise ValueError("Invalid command")
-                    p.stdin.write(cmd.encode()+b"\n"); p.stdin.flush(); result={"sent":True}
+                    if not send_console_command(sid,cmd): raise ValueError("Console input is unavailable. Restart this server once to enable persistent console commands.")
+                    result={"sent":True}
                 else:
                     folder=safe_dir(sid); dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
                     zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
