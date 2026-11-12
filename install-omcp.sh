@@ -48,7 +48,8 @@ UMask=0027
 WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload
-  systemctl enable --now omcp
+  systemctl enable omcp
+  if systemctl is-active --quiet omcp; then systemctl restart omcp; else systemctl start omcp; fi
   sleep 2
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
@@ -56,18 +57,20 @@ UNIT
 else
   echo "systemd is not usable (state: ${SYSTEMD_STATE:-unavailable}); using background-process mode."
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
-    echo "Existing OMCP process detected (PID $(cat "$DATA/agent.pid")); not starting a duplicate."
+    old_pid="$(cat "$DATA/agent.pid")"
+    echo "Restarting existing OMCP process (PID $old_pid) to load updated files."
+    kill "$old_pid" 2>/dev/null || true
+    for _ in {1..20}; do kill -0 "$old_pid" 2>/dev/null || break; sleep 0.25; done
+  fi
+  rm -f "$DATA/agent.pid"
+  runuser -u omcp -- sh -c 'nohup env OMCP_HOST=127.0.0.1 OMCP_PORT=8765 OMCP_DATA=/var/lib/omcp OMCP_WEB=/opt/omcp/index.html /usr/bin/python3 /opt/omcp/omcp_agent.py </dev/null >>/var/lib/omcp/agent.log 2>&1 & echo $! >/var/lib/omcp/agent.pid'
+  sleep 2
+  if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
+    echo "OMCP background process started (PID $(cat "$DATA/agent.pid"))."
   else
-    rm -f "$DATA/agent.pid"
-    runuser -u omcp -- sh -c 'nohup env OMCP_HOST=127.0.0.1 OMCP_PORT=8765 OMCP_DATA=/var/lib/omcp OMCP_WEB=/opt/omcp/index.html /usr/bin/python3 /opt/omcp/omcp_agent.py </dev/null >>/var/lib/omcp/agent.log 2>&1 & echo $! >/var/lib/omcp/agent.pid'
-    sleep 2
-    if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
-      echo "OMCP background process started (PID $(cat "$DATA/agent.pid"))."
-    else
-      echo "OMCP did not start. Recent log:"
-      tail -n 60 "$DATA/agent.log" 2>/dev/null || true
-      exit 1
-    fi
+    echo "OMCP did not start. Recent log:"
+    tail -n 60 "$DATA/agent.log" 2>/dev/null || true
+    exit 1
   fi
   echo "First-run Admin Key / startup log: sudo cat $DATA/agent.log"
   echo "Stop this no-systemd process: sudo kill \$(cat $DATA/agent.pid)"
