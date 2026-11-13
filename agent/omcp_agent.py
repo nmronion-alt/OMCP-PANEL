@@ -972,7 +972,7 @@ def write_server_properties(sid, changes):
         "difficulty":("enum",["peaceful","easy","normal","hard"]),"white-list":("bool",),
         "online-mode":("bool",),"allow-flight":("bool",),"force-gamemode":("bool",),
         "spawn-protection":("int",0,1000000),"require-resource-pack":("bool",),
-        "resource-pack":("url",),"resource-pack-prompt":("text",),"level-name":("world",)
+        "resource-pack":("url",),"resource-pack-prompt":("text",),"level-name":("world",),"level-seed":("seed",),"hardcore":("bool",),"generate-structures":("bool",),"allow-nether":("bool",),"pvp":("bool",),"spawn-monsters":("bool",),"spawn-animals":("bool",),"spawn-npcs":("bool",),"view-distance":("int",2,32),"simulation-distance":("int",2,32),"max-world-size":("int",1,29999984)
     }
     current=read_server_properties(sid)
     for key,value in changes.items():
@@ -987,6 +987,7 @@ def write_server_properties(sid, changes):
         if spec[0]=="url" and value and not re.match(r"^https://",value): raise ValueError("Resource pack URL must use HTTPS")
         if spec[0]=="world" and (not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",value) or value in (".","..")): raise ValueError("Invalid world name")
         if spec[0]=="text" and len(value)>500: raise ValueError("Prompt is too long")
+        if spec[0]=="seed" and (len(value)>128 or not re.fullmatch(r"[A-Za-z0-9 _.-]*",value)): raise ValueError("World seed must be at most 128 letters, numbers, spaces, dots, _ or -")
         current[key]=value
     lines=[]
     if path.exists():
@@ -1023,6 +1024,92 @@ def delete_world(sid,name):
     shutil.rmtree(target)
     return {"deleted":name}
 
+
+def import_world_archive(sid, archive_rel, world_name):
+    if server_running(sid): raise ValueError("Stop the server before importing a world.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",world_name or "") or world_name in (".",".."): raise ValueError("Invalid world folder name")
+    folder=safe_dir(sid); archive=server_path(folder,archive_rel)
+    if not archive.is_file() or archive.suffix.lower()!=".zip" or archive.is_symlink(): raise ValueError("Upload a valid .zip world archive")
+    target=folder/world_name
+    if target.exists(): raise ValueError("A folder with that world name already exists. Rename it or choose another name.")
+    temp=folder/(".omcp-world-extract-"+secrets.token_hex(6))
+    temp.mkdir(mode=0o700)
+    try:
+        with zipfile.ZipFile(archive,"r") as z:
+            infos=z.infolist()
+            if not infos or len(infos)>100000: raise ValueError("World ZIP is empty or contains too many entries")
+            total=0
+            for info in infos:
+                name=info.filename.replace("\\\\","/")
+                norm=posixpath.normpath(name)
+                mode=(info.external_attr>>16)&0o170000
+                if name.startswith("/") or norm in ("..",".") or norm.startswith("../") or ":" in name.split("/")[0] or mode==stat.S_IFLNK:
+                    raise ValueError("Unsafe path or symbolic link found in world ZIP")
+                total+=info.file_size
+                if total>8*1024*1024*1024: raise ValueError("World ZIP expands beyond the 8 GB safety limit")
+            z.extractall(temp)
+        candidates=[p for p in temp.iterdir() if p.is_dir()]
+        source=temp
+        if not (temp/"level.dat").is_file() and len(candidates)==1 and (candidates[0]/"level.dat").is_file(): source=candidates[0]
+        if not (source/"level.dat").is_file(): raise ValueError("Could not find level.dat. ZIP must contain a Minecraft world folder or its contents.")
+        shutil.move(str(source),str(target))
+        return {"imported":world_name,"bytes":sum(p.stat().st_size for p in target.rglob("*") if p.is_file() and not p.is_symlink())}
+    finally:
+        shutil.rmtree(temp,ignore_errors=True)
+        try: archive.unlink()
+        except OSError: pass
+
+def regenerate_world(sid,name):
+    if server_running(sid): raise ValueError("Stop the server before regenerating a world.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",name or "") or name in (".",".."): raise ValueError("Invalid world name")
+    folder=safe_dir(sid); active=read_server_properties(sid).get("level-name","world")
+    target=folder/name
+    if not target.is_dir() or target.is_symlink() or not (target/"level.dat").is_file(): raise ValueError("World folder not found")
+    names=[name]
+    if name==active:
+        names += [name+"_nether",name+"_the_end"]
+    dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
+    backup=dest/(sid+"-"+re.sub(r"[^A-Za-z0-9_-]","_",name)+"-before-regenerate-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+    with zipfile.ZipFile(backup,"w",zipfile.ZIP_DEFLATED,compresslevel=3) as z:
+        for world in names:
+            p=folder/world
+            if p.is_dir() and not p.is_symlink():
+                for item in p.rglob("*"):
+                    if item.is_symlink(): raise ValueError("World contains a symlink; refusing to regenerate it")
+                    if item.is_file(): z.write(item,item.relative_to(folder))
+    for world in names:
+        p=folder/world
+        if p.is_dir() and not p.is_symlink(): shutil.rmtree(p)
+    return {"regenerated":name,"backup":backup.name,"nextStart":"A fresh world will be generated the next time the server starts."}
+
+def world_datapacks(sid,name):
+    folder=safe_dir(sid); world=server_path(folder,name)
+    if not world.is_dir() or not (world/"level.dat").is_file(): raise ValueError("World not found")
+    datapacks=world/"datapacks"; out=[]
+    if datapacks.is_dir():
+        for p in sorted(datapacks.iterdir(),key=lambda x:x.name.casefold()):
+            if p.is_symlink(): continue
+            if (p.is_file() and p.suffix.lower()==".zip") or (p.is_dir() and (p/"pack.mcmeta").is_file()):
+                out.append({"name":p.name,"id":"file/"+p.name,"kind":"ZIP" if p.is_file() else "Folder"})
+    return out
+
+def apply_world_gamerule(sid,rule,value):
+    allowed={"keepInventory","doDaylightCycle","doWeatherCycle","mobGriefing","doMobSpawning","doFireTick","naturalRegeneration","announceAdvancements","commandBlockOutput","sendCommandFeedback","doInsomnia","doPatrolSpawning","doTraderSpawning","doWardenSpawning","drowningDamage","fallDamage","fireDamage","freezeDamage"}
+    if rule not in allowed: raise ValueError("Unsupported gamerule")
+    if not re.fullmatch(r"(?:true|false|[0-9]{1,9})",str(value),re.I): raise ValueError("Gamerule value must be true, false, or a whole number")
+    if not server_running(sid): raise ValueError("Start the server before applying gamerules")
+    if not send_console_command(sid,"gamerule "+rule+" "+str(value).lower()): raise ValueError("Could not send gamerule command to the server")
+    return {"applied":rule,"value":str(value).lower()}
+
+def set_world_datapack(sid,name,pack,action):
+    if action not in ("enable","disable"): raise ValueError("Invalid data pack action")
+    if not server_running(sid): raise ValueError("Start the server before enabling or disabling data packs")
+    packs=world_datapacks(sid,name)
+    item=next((p for p in packs if p["id"]=="file/"+pack or p["name"]==pack),None)
+    if not item: raise ValueError("Data pack not found in this world's datapacks folder")
+    if not send_console_command(sid,'datapack '+action+' "'+item["id"]+'"'): raise ValueError("Could not send data pack command")
+    return {"sent":True,"action":action,"pack":item["id"]}
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args): print(fmt%args,flush=True)
     def auth(self):
@@ -1049,6 +1136,10 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,{"properties":read_server_properties(x.group(1)),"running":server_running(x.group(1))})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds",path)
             if x: return send(self,200,{"worlds":list_worlds(x.group(1)),"running":server_running(x.group(1))})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/datapacks",path)
+            if x:
+                name=parse_qs(urlparse(self.path).query).get("name",[""])[0]
+                return send(self,200,{"datapacks":world_datapacks(x.group(1),name),"running":server_running(x.group(1))})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp",path)
             if x: return send(self,200,sftp_info(x.group(1)))
             x=re.fullmatch(r"/api/software/([a-z]+)/versions",path)
@@ -1106,6 +1197,29 @@ class Handler(BaseHTTPRequestHandler):
                 if meta.get("software","paper") not in ("paper","purpur","folia","spigot"): raise ValueError("Plugin installation is available for Paper, Purpur, Folia and Spigot game servers only")
                 q=parse_qs(urlparse(self.path).query).get("q",[""])[0]
                 return send(self,200,plugin_search(q))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/archive",path)
+            if x:
+                folder=safe_dir(x.group(1)); rel=parse_qs(urlparse(self.path).query).get("path",[""])[0]
+                target=server_path(folder,rel)
+                if not target.exists() or target.is_symlink(): raise ValueError("File or folder not found")
+                temp=ROOT/("omcp-archive-"+secrets.token_hex(12)+".zip")
+                try:
+                    with zipfile.ZipFile(temp,"w",zipfile.ZIP_DEFLATED,compresslevel=1) as z:
+                        if target.is_dir():
+                            for item in target.rglob("*"):
+                                if item.is_symlink(): raise ValueError("Folder contains a symlink; refusing to archive it")
+                                if item.is_file(): z.write(item,Path(rel)/item.relative_to(target))
+                        elif target.is_file(): z.write(target,target.name)
+                        else: raise ValueError("Unsupported file type")
+                    self.send_response(200); self.send_header("Content-Type","application/zip")
+                    self.send_header("Content-Disposition",'attachment; filename="'+re.sub(r"[^A-Za-z0-9_. -]","_",target.name)+'.zip"')
+                    self.send_header("Content-Length",str(temp.stat().st_size)); self.send_header("Cache-Control","no-store")
+                    self.end_headers()
+                    with temp.open("rb") as stream: shutil.copyfileobj(stream,self.wfile)
+                    return
+                finally:
+                    try: temp.unlink()
+                    except OSError: pass
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/download",path)
             if x:
                 folder=safe_dir(x.group(1)); rel=parse_qs(urlparse(self.path).query).get("path",[""])[0]
@@ -1204,6 +1318,14 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,{"saved":True,"properties":write_server_properties(x.group(1),d.get("properties",{})),"apply":"restart"})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/delete",path)
             if x: return send(self,200,delete_world(x.group(1),str(d.get("name",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/import",path)
+            if x: return send(self,200,import_world_archive(x.group(1),str(d.get("archive_path","")),str(d.get("name",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/regenerate",path)
+            if x: return send(self,200,regenerate_world(x.group(1),str(d.get("name",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/gamerule",path)
+            if x: return send(self,200,apply_world_gamerule(x.group(1),str(d.get("rule","")),str(d.get("value",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/datapacks",path)
+            if x: return send(self,200,set_world_datapack(x.group(1),str(d.get("world","")),str(d.get("pack","")),str(d.get("action",""))))
             mx=re.fullmatch(r"/api/servers/([a-f0-9]{8})/minekube/install",path)
             if mx: return send(self,200,enable_minekube(mx.group(1),str(d.get("endpoint",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp/reset",path)
