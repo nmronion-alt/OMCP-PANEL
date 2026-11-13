@@ -997,7 +997,7 @@ def write_server_properties(sid, changes):
                     lines.append(key+"="+current.pop(key)); continue
             lines.append(line)
     lines.extend(k+"="+v for k,v in current.items())
-    tmp=path.with_name(path.name+".tmp"); tmp.write_text("\\n".join(lines)+"\\n",encoding="utf-8"); os.replace(tmp,path)
+    tmp=path.with_name(path.name+".tmp"); tmp.write_text("\n".join(lines)+"\n",encoding="utf-8"); os.replace(tmp,path)
     return read_server_properties(sid)
 
 def list_worlds(sid):
