@@ -378,7 +378,7 @@ def software_versions(software):
     VERSION_CACHE[software]=(time.time(),versions)
     return versions
 
-def upgrade_server(sid, ver, software=None):
+def upgrade_server(sid, ver, software=None, wipe=False):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     if not re.fullmatch(r"\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?",ver): raise ValueError("Invalid Minecraft or proxy software version")
     if server_running(sid): raise ValueError("Stop the server before changing its version")
@@ -392,6 +392,11 @@ def upgrade_server(sid, ver, software=None):
     temp=folder/"server.jar.new"
     try:
         download_server_jar(software,ver,temp)
+        if wipe:
+            for child in list(folder.iterdir()):
+                if child.name in ("omcp.json","server.jar.new"): continue
+                if child.is_dir() and not child.is_symlink(): shutil.rmtree(child)
+                elif child.is_file() or child.is_symlink(): child.unlink()
         os.replace(temp,folder/"server.jar")
         meta["version"]=ver; meta["software"]=software; meta["serverType"]="proxy" if software in ("velocity","waterfall") else "game"
         atomic_json(folder/"omcp.json",meta)
@@ -929,11 +934,12 @@ def backup_scheduler_loop():
                 if not server_running(sid): continue
                 try:
                     result=create_live_backup(sid)
-                    cloud=google_drive_upload(result["path"])
-                    prune_uploaded_backups(sid,3)
+                    provider=item.get("provider","google_drive")
+                    cloud=google_drive_upload(result["path"]) if provider=="google_drive" else {"id":"","name":result["backup"]}
+                    if provider=="google_drive": prune_uploaded_backups(sid,3)
                     with BACKUP_CONFIG_LOCK:
                         latest=load_backup_config(); sched=latest.setdefault("schedules",{}).setdefault(sid,{})
-                        sched["last_run"]=now; sched["last_status"]="Uploaded "+result["backup"]+" to Google Drive"; sched["last_file_id"]=cloud.get("id","")
+                        sched["last_run"]=now; sched["last_status"]=("Uploaded "+result["backup"]+" to Google Drive") if provider=="google_drive" else ("Saved locally: "+result["backup"]); sched["last_file_id"]=cloud.get("id","")
                         save_backup_config(latest)
                     print("OMCP scheduled backup uploaded: "+sid+" "+result["backup"],flush=True)
                 except Exception as e:
@@ -1186,9 +1192,9 @@ class Handler(BaseHTTPRequestHandler):
                 sid=bs.group(1); enabled=bool(d.get("enabled",False)); interval=int(d.get("interval_minutes",360))
                 if not 15<=interval<=10080: raise ValueError("Backup interval must be between 15 minutes and 7 days.")
                 cfg=load_backup_config()
-                if enabled and not google_drive_configured(cfg): raise ValueError("Connect Google Drive before enabling automatic cloud backups.")
+                provider=str(d.get("provider","google_drive"))\n                if provider not in ("google_drive","local"): raise ValueError("Unsupported backup destination")\n                if enabled and provider=="google_drive" and not google_drive_configured(cfg): raise ValueError("Connect Google Drive before enabling Google Drive backups, or choose Local VPS storage.")
                 schedules=cfg.setdefault("schedules",{}); old=schedules.get(sid,{})
-                schedules[sid]={"enabled":enabled,"interval_minutes":interval,"provider":"google_drive","last_run":old.get("last_run",0),"last_status":old.get("last_status","Not run yet"),"last_file_id":old.get("last_file_id","")}
+                schedules[sid]={"enabled":enabled,"interval_minutes":interval,"provider":provider,"last_run":old.get("last_run",0),"last_status":old.get("last_status","Not run yet"),"last_file_id":old.get("last_file_id","")}
                 save_backup_config(cfg)
                 return send(self,200,{"saved":True,"schedule":schedules[sid],"driveConfigured":google_drive_configured(cfg)})
             if path=="/api/servers": return send(self,201,{"server":create(d)})
@@ -1237,7 +1243,7 @@ class Handler(BaseHTTPRequestHandler):
                 return send(self,200,{"reinstalled":True,"backup":backup.name})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/upgrade",path)
             if x:
-                result=upgrade_server(x.group(1),str(d.get("version","")).strip(),str(d.get("software","")).strip() or None)
+                result=upgrade_server(x.group(1),str(d.get("version","")).strip(),str(d.get("software","")).strip() or None,bool(d.get("wipe",False)))
                 return send(self,200,result)
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
