@@ -808,6 +808,7 @@ def plugin_versions(sid, project_id, source="modrinth"):
         url="https://api.spiget.org/v2/resources/"+str(int(project_id))+"/versions?size=100&page=0&sort=-releaseDate"
         with urllib.request.urlopen(urllib.request.Request(url,headers=ua),timeout=20) as r: raw=json.load(r)
         tested=resource.get("testedVersions") or []
+        if isinstance(tested,str): tested=[tested]
         exact_tested=bool(tested) and mc in [str(v) for v in tested]
         for v in raw if isinstance(raw,list) else []:
             vid=v.get("id")
@@ -821,13 +822,17 @@ def plugin_versions(sid, project_id, source="modrinth"):
 def _plugin_install_error(exc, source, mc):
     message=str(exc)
     low=message.lower()
-    if "404" in low or "not found" in low: reason="The selected plugin version or download file no longer exists."
+    if "404" in low or "not found" in low: reason="The selected plugin version or download file no longer exists. Choose another listed release."
     elif "timed out" in low or "timeout" in low: reason="The catalogue or download server timed out. Check VPS internet/DNS and retry."
+    elif "getaddrinfo" in low or "name or service not known" in low or "temporary failure in name resolution" in low: reason="The VPS could not resolve the catalogue/download hostname. Check DNS and outbound internet access."
     elif "403" in low or "401" in low: reason="The catalogue denied the request. The resource may be restricted or its download host may require access."
-    elif "valid jar" in low or "archive" in low: reason="The downloaded file is not a valid Java plugin JAR (or is larger than 50 MB)."
-    elif "already installed" in low: reason="A file with this plugin filename already exists in the plugins folder."
+    elif "500" in low or "502" in low or "503" in low or "504" in low: reason="The catalogue/download provider returned a server error. The provider may be temporarily unavailable; retry later."
+    elif "no space left" in low: reason="The VPS disk is full. Free disk space, then retry."
+    elif "permission denied" in low: reason="OMCP cannot write to the plugins folder. Check server-folder ownership and permissions."
+    elif "valid jar" in low or "archive" in low: reason="The downloaded file is not a valid Java plugin JAR (or is larger than 50 MB). The provider may be serving an HTML page or a non-JAR asset."
+    elif "already installed" in low: reason="A file with this plugin filename already exists in the plugins folder. Check the installed file before retrying."
     elif "compatible" in low or "minecraft" in low or "loader" in low: reason="No release could be verified for this server's Minecraft version/software."
-    else: reason="The installer could not complete the download or validation."
+    else: reason="The installer could not complete the download or validation. Review the technical detail and check the server folder and VPS network."
     return "Plugin installation failed ("+source+", Minecraft "+mc+"). "+reason+" Technical detail: "+message[:300]
 
 def install_plugin(sid, project_id, source="modrinth", version_id=""):
