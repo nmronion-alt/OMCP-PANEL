@@ -947,6 +947,76 @@ def backup_scheduler_loop():
         time.sleep(20)
 
 
+
+def read_server_properties(sid):
+    folder=safe_dir(sid); path=folder/"server.properties"
+    values={}
+    if path.exists():
+        for line in path.read_text(errors="replace").splitlines():
+            raw=line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw: continue
+            k,v=raw.split("=",1); values[k.strip()]=v.strip()
+    return values
+
+def write_server_properties(sid, changes):
+    folder=safe_dir(sid); path=folder/"server.properties"
+    if server_running(sid): raise ValueError("Stop the server before changing server.properties; restart after saving.")
+    allowed={
+        "max-players":("int",1,1000),"gamemode":("enum",["survival","creative","adventure","spectator"]),
+        "difficulty":("enum",["peaceful","easy","normal","hard"]),"white-list":("bool",),
+        "online-mode":("bool",),"allow-flight":("bool",),"force-gamemode":("bool",),
+        "spawn-protection":("int",0,1000000),"require-resource-pack":("bool",),
+        "resource-pack":("url",),"resource-pack-prompt":("text",),"level-name":("world",)
+    }
+    current=read_server_properties(sid)
+    for key,value in changes.items():
+        if key not in allowed: raise ValueError("Unsupported server.properties option: "+str(key))
+        spec=allowed[key]; value=str(value)
+        if spec[0]=="bool" and value.lower() not in ("true","false"): raise ValueError(key+" must be true or false")
+        if spec[0]=="int":
+            n=int(value)
+            if not spec[1]<=n<=spec[2]: raise ValueError(key+" is outside the allowed range")
+            value=str(n)
+        if spec[0]=="enum" and value not in spec[1]: raise ValueError("Invalid value for "+key)
+        if spec[0]=="url" and value and not re.match(r"^https://",value): raise ValueError("Resource pack URL must use HTTPS")
+        if spec[0]=="world" and (not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",value) or value in (".","..")): raise ValueError("Invalid world name")
+        if spec[0]=="text" and len(value)>500: raise ValueError("Prompt is too long")
+        current[key]=value
+    lines=[]
+    if path.exists():
+        for line in path.read_text(errors="replace").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key=line.split("=",1)[0].strip()
+                if key in current:
+                    lines.append(key+"="+current.pop(key)); continue
+            lines.append(line)
+    lines.extend(k+"="+v for k,v in current.items())
+    tmp=path.with_name(path.name+".tmp"); tmp.write_text("\\n".join(lines)+"\\n",encoding="utf-8"); os.replace(tmp,path)
+    return read_server_properties(sid)
+
+def list_worlds(sid):
+    folder=safe_dir(sid); props=read_server_properties(sid); active=props.get("level-name","world")
+    out=[]
+    for p in sorted(folder.iterdir(),key=lambda x:x.name.casefold()):
+        if p.is_dir() and not p.is_symlink() and (p.name==active or (p/"level.dat").exists()):
+            size=0
+            for item in p.rglob("*"):
+                try:
+                    if item.is_file() and not item.is_symlink(): size+=item.stat().st_size
+                except OSError: pass
+            out.append({"name":p.name,"active":p.name==active,"bytes":size})
+    return out
+
+def delete_world(sid,name):
+    if server_running(sid): raise ValueError("Stop the server before deleting a world.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",name) or name in (".",".."): raise ValueError("Invalid world name")
+    folder=safe_dir(sid); active=read_server_properties(sid).get("level-name","world")
+    if name==active: raise ValueError("The active world cannot be deleted. Change level-name first and restart.")
+    target=folder/name
+    if not target.is_dir() or target.is_symlink() or not (target/"level.dat").exists(): raise ValueError("World folder not found or level.dat is missing")
+    shutil.rmtree(target)
+    return {"deleted":name}
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args): print(fmt%args,flush=True)
     def auth(self):
@@ -969,6 +1039,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not u: return send(self,401,{"error":"Account no longer exists"})
                 return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/properties",path)
+            if x: return send(self,200,{"properties":read_server_properties(x.group(1)),"running":server_running(x.group(1))})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds",path)
+            if x: return send(self,200,{"worlds":list_worlds(x.group(1)),"running":server_running(x.group(1))})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp",path)
             if x: return send(self,200,sftp_info(x.group(1)))
             x=re.fullmatch(r"/api/software/([a-z]+)/versions",path)
@@ -1118,6 +1192,10 @@ class Handler(BaseHTTPRequestHandler):
                 save_backup_config(cfg)
                 return send(self,200,{"saved":True,"schedule":schedules[sid],"driveConfigured":google_drive_configured(cfg)})
             if path=="/api/servers": return send(self,201,{"server":create(d)})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/properties",path)
+            if x: return send(self,200,{"saved":True,"properties":write_server_properties(x.group(1),d.get("properties",{})),"apply":"restart"})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/delete",path)
+            if x: return send(self,200,delete_world(x.group(1),str(d.get("name",""))))
             mx=re.fullmatch(r"/api/servers/([a-f0-9]{8})/minekube/install",path)
             if mx: return send(self,200,enable_minekube(mx.group(1),str(d.get("endpoint",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp/reset",path)
@@ -1229,6 +1307,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self.auth(): return send(self,401,{"error":"Login required"})
         path=urlparse(self.path).path
+        sm=re.fullmatch(r"/api/servers/([a-f0-9]{8})",path)
+        if sm:
+            try:
+                sid=sm.group(1); d=body(self); folder=safe_dir(sid)
+                if server_running(sid): raise ValueError("Stop the server before deleting it.")
+                if d.get("confirm")!="DELETE": raise ValueError('Type DELETE to confirm permanent server removal.')
+                dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
+                backup=dest/(sid+"-before-delete-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+                with zipfile.ZipFile(backup,"w",zipfile.ZIP_DEFLATED,compresslevel=3) as z:
+                    for f in folder.rglob("*"):
+                        if f.is_file() and not f.is_symlink(): z.write(f,f.relative_to(folder))
+                shutil.rmtree(folder)
+                return send(self,200,{"deleted":sid,"backup":backup.name})
+            except Exception as e: return send(self,400,{"error":str(e)})
         fm=re.fullmatch(r"/api/servers/([a-f0-9]{8})/files",path)
         if fm:
             try:
