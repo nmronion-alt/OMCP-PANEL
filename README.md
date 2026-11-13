@@ -10,7 +10,8 @@ OMCP is a standalone Minecraft Java server panel for Linux VPS hosts, including 
 - Three-step server wizard (Minecraft version, software, RAM/details); Paper, Vanilla and Fabric server downloads are currently implemented with official download APIs and explicit Minecraft EULA acknowledgement.
 - Forge, Spigot and Velocity are visible as planned choices but are not implemented yet.
 - Start, stop, restart, Minecraft console commands and recent log viewing.
-- Basic text file browser/editor, live ZIP backups, per-server scheduled Google Drive uploads, server list and Linux memory/CPU-thread metrics.
+- File browser/editor with line numbers and basic syntax coloring, Aternos-style server.properties controls, world listing/deletion, safe server deletion with a final ZIP, and server software cards with optional wipe-after-backup.
+- Live ZIP backups, per-server scheduled local-VPS backups (no OAuth) or Google Drive uploads, server list and Linux memory/CPU-thread metrics.
 - Minecraft TCP routing adapters for Pinggy and Bore.pub, plus Minekube Connect plugin installation for supported Paper/Spigot/Velocity-compatible servers.
 - Local API binds to `127.0.0.1:8765` by default.
 
@@ -45,7 +46,7 @@ Cloudflare's ordinary web tunnel does not relay arbitrary Minecraft Java TCP tra
 
 ## MVP limitations
 
-Paper, Vanilla and Fabric creation are implemented; Paper uses PaperMC's current v3 downloads API. Other server software adapters are not implemented yet. Java 21 is installed by the Ubuntu/Debian installer. Cloud backups require the owner to configure Google OAuth credentials (Client ID, Client Secret and Refresh Token) in each server's Backups tab. The scheduler runs only while the OMCP agent is running and the Minecraft server is online. It briefly disables world saving, flushes saves, creates the ZIP, then re-enables saving before uploading. Google Drive uses resumable uploads for large archives. Test on a disposable VPS and back up worlds before production use.
+Paper, Vanilla and Fabric creation are implemented; Paper uses PaperMC's current v3 downloads API. Other server software adapters are not implemented yet. Java 21 is installed by the Ubuntu/Debian installer. Google Drive backups require the owner to configure Google OAuth credentials (Client ID, Client Secret and Refresh Token) in the Backups tab. Automatic local-VPS backups need no OAuth but are not off-site and can be lost with the VPS. The scheduler runs only while the OMCP agent is running and the Minecraft server is online. It briefly disables world saving, flushes saves, creates the ZIP, then re-enables saving before uploading. Google Drive uses resumable uploads for large archives. Test on a disposable VPS and back up worlds before production use.
 
 ## Source layout
 
