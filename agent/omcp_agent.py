@@ -274,7 +274,7 @@ def servers():
     for p in SERVERS.iterdir():
         if p.is_dir() and re.fullmatch(r"[a-f0-9]{8}",p.name) and (p/"omcp.json").exists():
             m=json.loads((p/"omcp.json").read_text())
-            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"port":m["port"],"status":"running" if server_running(p.name) else "stopped"})
+            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"cpuLimit":m.get("cpuLimit",0),"port":m["port"],"status":"running" if server_running(p.name) else "stopped"})
     return out
 
 def physical_ram_gb():
@@ -287,12 +287,13 @@ def physical_ram_gb():
 
 def create(d):
     name=str(d.get('name','')).strip(); ver=str(d.get('version','')).strip(); software=str(d.get('software','paper')).lower()
-    mem=int(d.get('memory',2)); port=int(d.get('port',25565))
+    mem=int(d.get('memory',2)); cpu_limit=int(d.get('cpuLimit',0)); port=int(d.get('port',25565))
     supported=('paper','purpur','folia','spigot','velocity','waterfall','fabric','vanilla')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
     if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?',ver): raise ValueError('Invalid Minecraft or proxy software version')
     if software not in supported: raise ValueError('Unsupported software. Choose Paper, Purpur, Folia, Velocity, Waterfall, Fabric or Vanilla.')
-    if not 1<=mem<=physical_ram_gb() or not 1024<=port<=65535: raise ValueError('RAM must be between 1 GB and host RAM; port 1024-65535')
+    if not 1<=mem<=physical_ram_gb() or not 0<=cpu_limit<=10000 or not 1024<=port<=65535: raise ValueError('RAM must be between 1 GB and host RAM; CPU limit 0 (unlimited) or 1-10000%; port 1024-65535')
+    if cpu_limit and not shutil.which("cpulimit"): raise ValueError("CPU limiting requires cpulimit. Re-run the OMCP installer to install it.")
     if not d.get('eulaAccepted'): raise ValueError('Accept the Minecraft EULA first')
     if not shutil.which('java'): raise ValueError('Java runtime not found')
     if any(s['name'].lower()==name.lower() or s['port']==port for s in servers()): raise ValueError('Name or port already used')
@@ -301,7 +302,7 @@ def create(d):
         download_server_jar(software,ver,folder/'server.jar')
         if software not in ('velocity','waterfall'): (folder/'eula.txt').write_text('eula=true\n')
         if software not in ('velocity','waterfall'): (folder/'server.properties').write_text('server-port='+str(port)+'\n')
-        (folder/'omcp.json').write_text(json.dumps({'name':name,'version':ver,'software':software,'memory':mem,'port':port,'serverType':'proxy' if software in ('velocity','waterfall') else 'game'},indent=2))
+        (folder/'omcp.json').write_text(json.dumps({'name':name,'version':ver,'software':software,'memory':mem,'cpuLimit':cpu_limit,'port':port,'serverType':'proxy' if software in ('velocity','waterfall') else 'game'},indent=2))
         return next(s for s in servers() if s['id']==sid)
     except Exception:
         shutil.rmtree(folder,ignore_errors=True)
@@ -445,8 +446,10 @@ def start(sid):
     if not java or not os.path.isfile(java) or not os.access(java,os.X_OK): raise ValueError("Selected Java runtime is missing or not executable. Choose a valid Java runtime in Server Settings.")
     jar=folder/("server.jar" if (folder/"server.jar").is_file() else "paper.jar")
     if not jar.is_file() or jar.stat().st_size<100000: raise ValueError("Server JAR is missing or incomplete. Check the server files or use Reinstall server.")
-    memory=int(m.get("memory",2))
+    memory=int(m.get("memory",2)); cpu_limit=int(m.get("cpuLimit",0) or 0)
     if memory<1 or memory>physical_ram_gb(): raise ValueError("Saved RAM setting is invalid for this host. Open Server Settings and save a valid memory limit.")
+    if not 0<=cpu_limit<=10000: raise ValueError("Saved CPU limit must be 0-10000%.")
+    if cpu_limit and not shutil.which("cpulimit"): raise ValueError("CPU limit is configured but cpulimit is not installed. Re-run the OMCP installer.")
     log_path=folder/"console.log"
     fifo_path=folder/"console.stdin"
     if fifo_path.exists() and not fifo_path.is_fifo(): fifo_path.unlink()
@@ -455,8 +458,12 @@ def start(sid):
     fifo_fd=os.open(fifo_path,os.O_RDWR)
     try:
         with log_path.open("wb",buffering=0) as log:
-            log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | JAR: "+jar.name+"\n").encode())
+            log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | CPU limit: "+(str(cpu_limit)+"%" if cpu_limit else "unlimited")+" | JAR: "+jar.name+"\n").encode())
             p=subprocess.Popen([java,f"-Xms{min(1,memory)}G",f"-Xmx{memory}G","-jar",str(jar),"nogui"],cwd=folder,stdin=fifo_fd,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+            if cpu_limit:
+                try: subprocess.Popen(["cpulimit","--pid",str(p.pid),"--limit",str(cpu_limit),"--background"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+                except Exception as e:
+                    p.terminate(); raise ValueError("Could not apply CPU limit: "+str(e))
     except Exception as e:
         raise ValueError("Could not launch Minecraft: "+str(e))
     finally:
@@ -799,7 +806,7 @@ def server_metrics(sid):
             stat=Path("/proc/%s/stat"%pid).read_text()
             fields=stat[stat.rfind(")")+2:].split()
             ticks=int(fields[11])+int(fields[12]); now=time.time(); prev=METRIC_PREV.get(sid)
-            cpu=round(min(100.0,max(0.0,((ticks-prev[1])/(os.sysconf("SC_CLK_TCK")*max(.1,now-prev[0])))*100.0)),1) if prev else 0.0
+            cpu=round(max(0.0,((ticks-prev[1])/(os.sysconf("SC_CLK_TCK")*max(.1,now-prev[0])))*100.0),1) if prev else 0.0
             METRIC_PREV[sid]=(now,ticks)
         except Exception: cpu=0.0
         try:
@@ -1004,14 +1011,17 @@ def write_server_properties(sid, changes):
 def list_worlds(sid):
     folder=safe_dir(sid); props=read_server_properties(sid); active=props.get("level-name","world")
     out=[]
+    ignored={"plugins","mods","config","logs","libraries","versions","cache","backups","crash-reports","worlds"}
     for p in sorted(folder.iterdir(),key=lambda x:x.name.casefold()):
-        if p.is_dir() and not p.is_symlink() and (p.name==active or (p/"level.dat").exists()):
-            size=0
-            for item in p.rglob("*"):
-                try:
-                    if item.is_file() and not item.is_symlink(): size+=item.stat().st_size
-                except OSError: pass
-            out.append({"name":p.name,"active":p.name==active,"bytes":size})
+        if not p.is_dir() or p.is_symlink() or p.name in ignored: continue
+        markers=(p/"level.dat").is_file() or (p/"uid.dat").is_file() or (p/"region").is_dir() or (p/"DIM-1").is_dir() or (p/"DIM1").is_dir() or p.name==active
+        if not markers: continue
+        size=0
+        for item in p.rglob("*"):
+            try:
+                if item.is_file() and not item.is_symlink(): size+=item.stat().st_size
+            except OSError: pass
+        out.append({"name":p.name,"active":p.name==active,"bytes":size,"source":"server folder"})
     return out
 
 def delete_world(sid,name):
@@ -1214,7 +1224,7 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
             if x:
                 sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-                return send(self,200,{"name":meta.get("name","Minecraft"),"memory":meta.get("memory",2),"memoryMax":physical_ram_gb(),"javaPath":meta.get("javaPath",""),"runtimes":java_runtimes()})
+                return send(self,200,{"name":meta.get("name","Minecraft"),"memory":meta.get("memory",2),"memoryMax":physical_ram_gb(),"cpuLimit":meta.get("cpuLimit",0),"cpuMax":10000,"javaPath":meta.get("javaPath",""),"runtimes":java_runtimes()})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/search",path)
             if x:
                 sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
@@ -1365,18 +1375,20 @@ class Handler(BaseHTTPRequestHandler):
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
                 name=str(d.get("name",meta.get("name","Minecraft"))).strip()
                 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]{1,31}",name): raise ValueError("Server name must be 2-32 characters: letters, numbers, spaces, _ or -")
-                mem=int(d.get("memory",meta.get("memory",2)))
+                mem=int(d.get("memory",meta.get("memory",2))); cpu_limit=int(d.get("cpuLimit",meta.get("cpuLimit",0)) or 0)
                 maximum=physical_ram_gb()
                 if not 1<=mem<=maximum: raise ValueError("Memory must be between 1 GB and available host RAM ("+str(maximum)+" GB)")
+                if not 0<=cpu_limit<=10000: raise ValueError("CPU limit must be 0 (unlimited) or between 1 and 10000 percent.")
+                if cpu_limit and not shutil.which("cpulimit"): raise ValueError("CPU limiting requires cpulimit. Re-run the OMCP installer.")
                 java_path=str(d.get("javaPath","")).strip()
                 valid={r["path"] for r in java_runtimes()}
                 if java_path and java_path not in valid: raise ValueError("Selected Java runtime is not installed. Refresh the page and choose an available runtime.")
-                meta["name"]=name; meta["memory"]=mem
+                meta["name"]=name; meta["memory"]=mem; meta["cpuLimit"]=cpu_limit
                 if java_path: meta["javaPath"]=java_path
                 else: meta.pop("javaPath",None)
                 atomic_json(folder/"omcp.json",meta)
                 check=json.loads((folder/"omcp.json").read_text())
-                return send(self,200,{"saved":True,"name":check["name"],"memory":check["memory"],"javaPath":check.get("javaPath",""),"apply":"next-start"})
+                return send(self,200,{"saved":True,"name":check["name"],"memory":check["memory"],"cpuLimit":check.get("cpuLimit",0),"javaPath":check.get("javaPath",""),"apply":"next-start"})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/reinstall",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
