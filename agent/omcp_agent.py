@@ -1025,6 +1025,21 @@ def delete_world(sid,name):
     return {"deleted":name}
 
 
+def create_file_archive(sid,rel):
+    folder=safe_dir(sid); target=server_path(folder,rel)
+    if not target.exists() or target.is_symlink(): raise ValueError("File or folder not found")
+    base=target.name+".zip"; dest=target.with_name(base); index=1
+    while dest.exists():
+        dest=target.with_name(target.name+"-"+str(index)+".zip"); index+=1
+    with zipfile.ZipFile(dest,"w",zipfile.ZIP_DEFLATED,compresslevel=1) as z:
+        if target.is_dir():
+            for item in target.rglob("*"):
+                if item.is_symlink(): raise ValueError("Folder contains a symlink; refusing to archive it")
+                if item.is_file(): z.write(item,Path(target.name)/item.relative_to(target))
+        elif target.is_file(): z.write(target,target.name)
+        else: raise ValueError("Unsupported file type")
+    return {"archived":str(dest.relative_to(folder)),"bytes":dest.stat().st_size}
+
 def import_world_archive(sid, archive_rel, world_name):
     if server_running(sid): raise ValueError("Stop the server before importing a world.")
     if not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",world_name or "") or world_name in (".",".."): raise ValueError("Invalid world folder name")
@@ -1325,6 +1340,8 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/api/servers": return send(self,201,{"server":create(d)})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/properties",path)
             if x: return send(self,200,{"saved":True,"properties":write_server_properties(x.group(1),d.get("properties",{})),"apply":"restart"})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/archive",path)
+            if x: return send(self,200,create_file_archive(x.group(1),str(d.get("path",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/delete",path)
             if x: return send(self,200,delete_world(x.group(1),str(d.get("name",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/import",path)
