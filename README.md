@@ -15,28 +15,15 @@ OMCP is a standalone Minecraft Java server panel for Linux VPS hosts, including 
 - Minecraft TCP routing adapters for Pinggy and Bore.pub, plus Minekube Connect plugin installation for supported Paper/Spigot/Velocity-compatible servers.
 - Local API binds to `127.0.0.1:8765` by default.
 
-## One-command installer (Ubuntu/Debian, systemd or no-systemd)
+## One-command installer (Ubuntu/Debian)
 
-Review the installer before running it. On a fresh supported VPS:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/main/install-omcp.sh -o install-omcp.sh
-sudo bash install-omcp.sh
-```
-
-Or, after reviewing the script, run it directly:
+On a fresh Ubuntu/Debian VPS with sudo access, run this single command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/main/install-omcp.sh | sudo bash
 ```
 
-The installer installs Python 3 and OpenJDK 21, creates a dedicated unprivileged `omcp` Linux account and downloads the agent/UI. Bore's official static binary is downloaded on first use for Linux x86_64 or ARM64 hosts. On systemd VPS hosts it enables a systemd service; in Cloud Shell/container environments without systemd it starts a background process and writes its log to `/var/lib/omcp/agent.log`. Retrieve the first-run Admin Key with:
-
-```bash
-sudo journalctl -u omcp -n 80 --no-pager  # systemd VPS\nsudo cat /var/lib/omcp/agent.log          # no-systemd Cloud Shell/container
-```
-
-Open locally at `http://127.0.0.1:8765`. The panel itself is not a public listener. The panel web tunnel and Minecraft TCP routing are separate. Minecraft routing supports Pinggy and Bore.pub TCP relays. Minekube Connect is enabled by installing its official server/proxy plugin; restart the Minecraft server after installation and share the generated `*.play.minekube.net` address.
+The installer installs the required runtime, creates the dedicated `omcp` service account, downloads the latest panel and agent, and starts OMCP. The panel URL and first-run setup details are printed by the installer. Cloud Shell/container sessions may be temporary; use a persistent VPS for a long-running panel.
 
 ## Remote access / private-IP VPS
 
