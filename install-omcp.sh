@@ -21,6 +21,8 @@ install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
 curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py"
 curl -fsSL "$REPO/index.html" -o "$APP/index.html"
+# Validate the complete agent source before stopping/restarting the existing process.
+python3 -m py_compile "$APP/omcp_agent.py"
 chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
 chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
 
