@@ -764,9 +764,12 @@ def plugin_search(sid, query="", source="modrinth", page=0):
                 for descriptor in ("plugin.yml","paper-plugin.yml","bungee.yml"):
                     if descriptor not in archive.namelist(): continue
                     raw=archive.read(descriptor).decode("utf-8","replace")
-                    match=re.search(r"(?m)^\\s*name\\s*:\\s*['\\\"]?([^'\\\"#\\r\\n]+)",raw)
-                    if match:
-                        installed_names.add(match.group(1).strip().lower().replace(" ","").replace("_","").replace("-",""))
+                    for line in raw.splitlines():
+                        if line.strip().lower().startswith("name:"):
+                            plugin_name=line.split(":",1)[1].strip().strip("'\\\"").split("#",1)[0].strip()
+                            if plugin_name:
+                                installed_names.add(plugin_name.lower().replace(" ","").replace("_","").replace("-",""))
+                            break
         except Exception:
             continue
     for item in results:
@@ -794,7 +797,8 @@ def plugin_versions(sid, project_id, source="modrinth"):
             f=next((x for x in v.get("files",[]) if x.get("primary")),v.get("files",[None])[0] if v.get("files") else None)
             if not f: continue
             versions.append({"id":v.get("id"),"version":v.get("version_number") or v.get("name"),"name":v.get("name"),"date":v.get("date_published"),"type":v.get("version_type","release"),"recommended":False,"file":f.get("filename")})
-        versions.sort(key=lambda x:(0 if x.get("type")=="release" else 1,x.get("date") or ""),reverse=False)
+        versions.sort(key=lambda x:x.get("date") or "",reverse=True)
+        versions.sort(key=lambda x:x.get("type")!="release")
         if versions: versions[0]["recommended"]=True
         return {"versions":versions,"recommended":versions[0]["id"] if versions else None,"compatibility":"Exact Minecraft version and loader match","minecraftVersion":mc,"source":source}
     if source=="spiget":
