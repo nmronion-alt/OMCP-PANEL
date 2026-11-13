@@ -808,14 +808,14 @@ def plugin_versions(sid, project_id, source="modrinth"):
         url="https://api.spiget.org/v2/resources/"+str(int(project_id))+"/versions?size=100&page=0&sort=-releaseDate"
         with urllib.request.urlopen(urllib.request.Request(url,headers=ua),timeout=20) as r: raw=json.load(r)
         tested=resource.get("testedVersions") or []
-        exact_tested=not tested or mc in [str(v) for v in tested]
+        exact_tested=bool(tested) and mc in [str(v) for v in tested]
         for v in raw if isinstance(raw,list) else []:
             vid=v.get("id")
             if vid is None: continue
             versions.append({"id":str(vid),"version":str(v.get("name") or ("Version "+str(vid))),"name":v.get("name") or "Spigot release","date":v.get("releaseDate"),"type":"release","recommended":False,"file":None})
         versions.sort(key=lambda x:int(x["id"]) if str(x["id"]).isdigit() else 0,reverse=True)
         if versions: versions[0]["recommended"]=True
-        return {"versions":versions,"recommended":versions[0]["id"] if versions else None,"compatibility":"Spiget tested versions match" if exact_tested else "Spiget resource does not list this Minecraft version as tested","minecraftVersion":mc,"testedVersions":tested,"source":source}
+        return {"versions":versions,"recommended":versions[0]["id"] if versions else None,"compatibility":"Spiget resource lists this Minecraft version as tested" if exact_tested else "Spiget cannot verify this Minecraft version from its tested-version metadata; check the resource page before installing","minecraftVersion":mc,"testedVersions":tested,"source":source}
     raise ValueError("Unknown plugin source. Choose Modrinth or Spiget.")
 
 def _plugin_install_error(exc, source, mc):
