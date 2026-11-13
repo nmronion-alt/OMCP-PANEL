@@ -723,7 +723,7 @@ def plugin_search(query):
     try:
         with urllib.request.urlopen(req,timeout=18) as r: data=json.load(r)
         for x in data.get("hits",[]):
-            results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"downloads":x.get("downloads",0),"source":"modrinth"})
+            results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"icon":x.get("icon_url",""),"downloads":x.get("downloads",0),"source":"modrinth"})
     except Exception as e:
         errors.append("Modrinth: "+str(e)[:180])
     try:
@@ -734,7 +734,7 @@ def plugin_search(query):
         for x in items if isinstance(items,list) else []:
             rid=x.get("id")
             if rid is not None:
-                results.append({"id":str(rid),"name":x.get("name","Spigot resource"),"description":x.get("tag","") or x.get("description",""),"downloads":x.get("downloads",0),"source":"spiget"})
+                results.append({"id":str(rid),"name":x.get("name","Spigot resource"),"description":x.get("tag","") or x.get("description",""),"icon":(x.get("icon") or {}).get("url","") if isinstance(x.get("icon"),dict) else "","downloads":x.get("downloads",0),"source":"spiget"})
     except Exception as e:
         errors.append("Spiget: "+str(e)[:180])
     results.sort(key=lambda x:int(x.get("downloads") or 0),reverse=True)
@@ -1192,7 +1192,9 @@ class Handler(BaseHTTPRequestHandler):
                 sid=bs.group(1); enabled=bool(d.get("enabled",False)); interval=int(d.get("interval_minutes",360))
                 if not 15<=interval<=10080: raise ValueError("Backup interval must be between 15 minutes and 7 days.")
                 cfg=load_backup_config()
-                provider=str(d.get("provider","google_drive"))\n                if provider not in ("google_drive","local"): raise ValueError("Unsupported backup destination")\n                if enabled and provider=="google_drive" and not google_drive_configured(cfg): raise ValueError("Connect Google Drive before enabling Google Drive backups, or choose Local VPS storage.")
+                provider=str(d.get("provider","google_drive"))
+                if provider not in ("google_drive","local"): raise ValueError("Unsupported backup destination")
+                if enabled and provider=="google_drive" and not google_drive_configured(cfg): raise ValueError("Connect Google Drive before enabling Google Drive backups, or choose Local VPS storage.")
                 schedules=cfg.setdefault("schedules",{}); old=schedules.get(sid,{})
                 schedules[sid]={"enabled":enabled,"interval_minutes":interval,"provider":provider,"last_run":old.get("last_run",0),"last_status":old.get("last_status","Not run yet"),"last_file_id":old.get("last_file_id","")}
                 save_backup_config(cfg)
