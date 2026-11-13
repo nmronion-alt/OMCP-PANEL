@@ -994,7 +994,7 @@ def write_server_properties(sid, changes):
         if spec[0]=="url" and value and not re.match(r"^https://",value): raise ValueError("Resource pack URL must use HTTPS")
         if spec[0]=="world" and (not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",value) or value in (".","..")): raise ValueError("Invalid world name")
         if spec[0]=="text" and len(value)>500: raise ValueError("Prompt is too long")
-        if spec[0]=="motd" and (len(value)>256 or "\\n" in value or "\\r" in value): raise ValueError("MOTD must be a single line of at most 256 characters")
+        if spec[0]=="motd" and (len(value)>256 or "\n" in value or "\r" in value): raise ValueError("MOTD must be a single line of at most 256 characters")
         if spec[0]=="seed" and (len(value)>128 or not re.fullmatch(r"[A-Za-z0-9 _.-]*",value)): raise ValueError("World seed must be at most 128 letters, numbers, spaces, dots, _ or -")
         current[key]=value
     lines=[]
