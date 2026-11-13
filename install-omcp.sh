@@ -7,7 +7,7 @@ DATA="/var/lib/omcp"
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless openssh-client
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless openssh-client cpulimit
 # Install Java 25 when the configured Ubuntu/Debian repositories provide it; Java 21 remains the baseline.
 if apt-cache show openjdk-25-jre-headless >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-25-jre-headless
