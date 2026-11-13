@@ -1064,7 +1064,7 @@ def extract_file_archive(sid, rel):
             if not infos or len(infos)>100000: raise ValueError("ZIP is empty or contains too many entries")
             total=0
             for info in infos:
-                name=info.filename.replace("\\\\","/")
+                name=info.filename.replace("\\","/")
                 norm=posixpath.normpath(name)
                 mode=(info.external_attr>>16)&0o170000
                 if name.startswith("/") or norm in ("..",".") or norm.startswith("../") or ":" in name.split("/")[0] or mode==stat.S_IFLNK:
