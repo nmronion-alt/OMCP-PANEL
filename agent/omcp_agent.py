@@ -1059,6 +1059,14 @@ def import_world_archive(sid, archive_rel, world_name):
         try: archive.unlink()
         except OSError: pass
 
+def activate_world(sid,name):
+    if server_running(sid): raise ValueError("Stop the server before changing the active world.")
+    if not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",name or "") or name in (".",".."): raise ValueError("Invalid world name")
+    folder=safe_dir(sid); target=folder/name
+    if not target.is_dir() or target.is_symlink() or not (target/"level.dat").is_file(): raise ValueError("World folder not found or level.dat is missing")
+    props=write_server_properties(sid,{"level-name":name})
+    return {"active":name,"properties":props,"apply":"next-start"}
+
 def regenerate_world(sid,name):
     if server_running(sid): raise ValueError("Stop the server before regenerating a world.")
     if not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",name or "") or name in (".",".."): raise ValueError("Invalid world name")
@@ -1089,7 +1097,7 @@ def world_datapacks(sid,name):
     if datapacks.is_dir():
         for p in sorted(datapacks.iterdir(),key=lambda x:x.name.casefold()):
             if p.is_symlink(): continue
-            if (p.is_file() and p.suffix.lower()==".zip") or (p.is_dir() and (p/"pack.mcmeta").is_file()):
+            if re.fullmatch(r"[A-Za-z0-9_. -]{1,128}",p.name) and ((p.is_file() and p.suffix.lower()==".zip") or (p.is_dir() and (p/"pack.mcmeta").is_file())):
                 out.append({"name":p.name,"id":"file/"+p.name,"kind":"ZIP" if p.is_file() else "Folder"})
     return out
 
@@ -1103,6 +1111,7 @@ def apply_world_gamerule(sid,rule,value):
 
 def set_world_datapack(sid,name,pack,action):
     if action not in ("enable","disable"): raise ValueError("Invalid data pack action")
+    if not re.fullmatch(r"[A-Za-z0-9_. -]{1,128}",pack or ""): raise ValueError("Invalid data pack name")
     if not server_running(sid): raise ValueError("Start the server before enabling or disabling data packs")
     packs=world_datapacks(sid,name)
     item=next((p for p in packs if p["id"]=="file/"+pack or p["name"]==pack),None)
@@ -1320,6 +1329,8 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,delete_world(x.group(1),str(d.get("name",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/import",path)
             if x: return send(self,200,import_world_archive(x.group(1),str(d.get("archive_path","")),str(d.get("name",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/activate",path)
+            if x: return send(self,200,activate_world(x.group(1),str(d.get("name",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/regenerate",path)
             if x: return send(self,200,regenerate_world(x.group(1),str(d.get("name",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/gamerule",path)
