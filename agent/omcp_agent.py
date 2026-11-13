@@ -936,7 +936,7 @@ def backup_scheduler_loop():
                     result=create_live_backup(sid)
                     provider=item.get("provider","google_drive")
                     cloud=google_drive_upload(result["path"]) if provider=="google_drive" else {"id":"","name":result["backup"]}
-                    if provider=="google_drive": prune_uploaded_backups(sid,3)
+                    prune_uploaded_backups(sid,3 if provider=="google_drive" else 10)
                     with BACKUP_CONFIG_LOCK:
                         latest=load_backup_config(); sched=latest.setdefault("schedules",{}).setdefault(sid,{})
                         sched["last_run"]=now; sched["last_status"]=("Uploaded "+result["backup"]+" to Google Drive") if provider=="google_drive" else ("Saved locally: "+result["backup"]); sched["last_file_id"]=cloud.get("id","")
