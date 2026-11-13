@@ -1,45 +1,109 @@
-# OMCP — Onion Minecraft Panel
+# 🧅 OMCP — Onion Minecraft Control Panel
 
-OMCP is a standalone Minecraft Java server panel for Linux VPS hosts, including hosts without public IPv4. It does **not** install or depend on Pterodactyl or Wings.
+<p align="center">
+  <strong>A self-hosted Minecraft server control panel.</strong><br>
+  Manage your Minecraft servers, files, worlds, plugins, backups and network access from one clean dashboard.
+</p>
 
-## Functional MVP included
+<p align="center">
+  <a href="https://discord.gg/kRGg2HjRKn">💬 Join our Discord</a>
+  &nbsp;•&nbsp;
+  <a href="https://www.youtube.com/@not_mr_onion1">▶️ YouTube — not Mr Onion</a>
+</p>
 
-- First-run Admin account setup, username/password login, separate user accounts, and salted PBKDF2 password hashes.
-- Username matching is case-insensitive; passwords remain case-sensitive.
-- Local OMCP agent and web panel; management API stays bound to localhost by default.
-- Three-step server wizard (Minecraft version, software, RAM/details); Paper, Vanilla and Fabric server downloads are currently implemented with official download APIs and explicit Minecraft EULA acknowledgement.
-- Forge, Spigot and Velocity are visible as planned choices but are not implemented yet.
-- Start, stop, restart, Minecraft console commands and recent log viewing.
-- File browser/editor with line numbers and basic syntax coloring, Aternos-style server.properties controls, world listing/deletion, safe server deletion with a final ZIP, and server software cards with optional wipe-after-backup.
-- Live ZIP backups, per-server scheduled local-VPS backups (no OAuth) or Google Drive uploads, server list and Linux memory/CPU-thread metrics.
-- Minecraft TCP routing adapters for Pinggy and Bore.pub, plus Minekube Connect plugin installation for supported Paper/Spigot/Velocity-compatible servers.
-- Local API binds to `127.0.0.1:8765` by default.
+<p align="center">
+  <strong>Created by not Mr Onion</strong>
+</p>
 
-## One-command installer (Ubuntu/Debian)
+---
 
-On a fresh Ubuntu/Debian VPS with sudo access, run this single command:
+## ⚡ Install OMCP
+
+Run this **single command** on a fresh Ubuntu/Debian VPS with `sudo` access:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/main/install-omcp.sh | sudo bash
+sudo bash -c 'curl -fsSL https://raw.githubusercontent.com/nmronion-alt/onion-hub/main/install-omcp.sh | bash && echo "Waiting for OMCP Panel Link..." && for i in $(seq 1 60); do URL=$(grep -Eo "https://[A-Za-z0-9.-]+\.tunnl\.gg" /var/lib/omcp/tunnl.log 2>/dev/null | tail -n 1); if [ -n "$URL" ]; then echo ""; echo "================================"; echo "       OMCP PANEL READY"; echo "================================"; echo "PANEL LINK: $URL"; echo "================================"; exit 0; fi; sleep 2; done; echo "Panel link not found. Check /var/lib/omcp/tunnl.log"'
 ```
 
-The installer installs the required runtime, creates the dedicated `omcp` service account, downloads the latest panel and agent, and starts OMCP. The panel URL and first-run setup details are printed by the installer. Cloud Shell/container sessions may be temporary; use a persistent VPS for a long-running panel.
+The installer sets up OMCP and starts its panel tunnel. When the tunnel connects, the command prints the **Panel Link** in your terminal. Open that link in your browser.
 
-## Remote access / private-IP VPS
+> **Note:** This installer targets Ubuntu/Debian systems. Use a persistent VPS for a panel that should stay online. Temporary cloud-shell sessions can stop or lose their files when the session ends.
 
-For remote web access, configure Cloudflare Tunnel to `http://localhost:8765` and protect the hostname with Cloudflare Access. Do not expose port 8765 directly or publish an unauthenticated tunnel. The generated OMCP Admin Key is still required for management actions.
+## ✨ What is OMCP?
 
-Cloudflare's ordinary web tunnel does not relay arbitrary Minecraft Java TCP traffic. Player connectivity requires a separate TCP relay/provider. The installer does not configure a game relay. Cloud Shell is ephemeral: processes and files may disappear when the session ends, so it is for testing rather than persistent hosting.
+OMCP is a self-hosted control panel for managing Minecraft Java servers on your own Linux host. It includes a web dashboard and a local agent that controls the Minecraft server process and its files.
 
-## MVP limitations
+**How it works**
 
-Paper, Vanilla and Fabric creation are implemented; Paper uses PaperMC's current v3 downloads API. Other server software adapters are not implemented yet. Java 21 is installed by the Ubuntu/Debian installer. Google Drive backups require the owner to configure Google OAuth credentials (Client ID, Client Secret and Refresh Token) in the Backups tab. Automatic local-VPS backups need no OAuth but are not off-site and can be lost with the VPS. The scheduler runs only while the OMCP agent is running and the Minecraft server is online. It briefly disables world saving, flushes saves, creates the ZIP, then re-enables saving before uploading. Google Drive uses resumable uploads for large archives. Test on a disposable VPS and back up worlds before production use.
+```text
+Your Browser
+    │
+    ▼
+OMCP Web Panel (HTTPS)
+    │
+    ▼
+OMCP Agent on your VPS
+    │
+    ├── Minecraft Server
+    ├── Server Files & Worlds
+    ├── Plugins & Configuration
+    └── Backups & Network Routing
+```
 
-## Source layout
+The management API listens on `127.0.0.1:8765` by default. The installer provides the panel's remote HTTPS link through its tunnel.
 
-- `agent/omcp_agent.py` — Python standard-library local API/process manager.
-- `index.html` — interactive panel served by the agent.
-- `install-omcp.sh` — Ubuntu/Debian systemd installer.
-- `docs/ARCHITECTURE.md` — architecture and security notes.
+## 🚀 Features
 
-No arbitrary host-shell endpoint is provided. Console commands go only to the selected Minecraft server process.
+| Area | What you can do |
+|---|---|
+| 🖥️ **Server Console** | Start, stop and restart servers, send console commands, and view live/recent logs |
+| 📦 **Server Software** | Create and manage supported Minecraft server types and choose available versions |
+| 📁 **File Manager** | Browse, upload, edit, rename, delete, download and archive server files; extract ZIP archives |
+| 🌍 **World Manager** | View server worlds, import worlds from ZIP or folder, and manage eligible worlds |
+| ⚙️ **Options** | Configure common server properties, gameplay settings and MOTD with a formatted preview |
+| 🧩 **Plugins** | Browse plugin catalogues, choose available plugin versions, install plugins and see detected installed plugins |
+| 💾 **Backups** | Create ZIP backups and schedule local VPS or Google Drive backups |
+| 🔐 **SFTP** | Access server files through the panel's SFTP service |
+| 🌐 **Network Routing** | Use supported Minecraft TCP relay options and Minekube Connect integration |
+| 📊 **Resource Information** | View host memory and CPU-thread information |
+| 👤 **Accounts** | Set up an admin account and sign in with protected password storage |
+
+Feature availability depends on the selected Minecraft software, version, host environment and configured providers. Some plugin or server-software combinations may need a manual restart or additional compatibility checks.
+
+## 🧰 Requirements
+
+- Ubuntu or Debian Linux VPS
+- Root or `sudo` access
+- Internet connection for installation and downloads
+- A persistent host for long-running use
+
+The installer installs the runtime components it needs, including Java 21 where required.
+
+## 🔒 Security & networking
+
+- The OMCP management API binds to localhost (`127.0.0.1:8765`) by default.
+- Do not expose the management API directly to the public internet.
+- Keep your admin credentials private and use a trusted HTTPS access method.
+- Minecraft Java player traffic uses a separate TCP route/relay; a web HTTPS tunnel alone does not carry Minecraft TCP connections.
+- Local backups stay on the VPS. They are not off-site and can be lost if the host is lost.
+- Google Drive backups require your own Google OAuth configuration.
+
+## 🧑‍💻 Project files
+
+- `agent/omcp_agent.py` — local API and Minecraft process manager
+- `index.html` — OMCP web dashboard
+- `install-omcp.sh` — installer
+- `docs/ARCHITECTURE.md` — architecture and security notes
+
+## 💬 Community & updates
+
+Questions, feedback or ideas? Join the community:
+
+- **Discord:** https://discord.gg/kRGg2HjRKn
+- **YouTube:** https://www.youtube.com/@not_mr_onion1
+
+---
+
+<p align="center">
+  Made with 🧅 by <strong>not Mr Onion</strong>
+</p>
