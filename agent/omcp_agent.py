@@ -718,84 +718,156 @@ def stop_tunnel(sid):
             except subprocess.TimeoutExpired: p.kill()
         return {"status":"stopped"}
 
-def plugin_search(query):
+def plugin_search(sid, query="", source="modrinth", page=0):
     query=str(query or "").strip()
+    source=str(source or "modrinth").lower()
+    page=max(0,min(int(page or 0),500))
     if len(query)>100: raise ValueError("Search query is too long")
-    ua={"User-Agent":"OMCP/0.7 (https://github.com/nmronion-alt/onion-hub)"}
-    results=[]; errors=[]
-    facets='[["project_type:plugin"],["categories:paper"]]'
-    params="limit=10&index=downloads&facets="+quote(facets)
-    if query: params+="&query="+quote(query)
-    req=urllib.request.Request("https://api.modrinth.com/v2/search?"+params,headers=ua)
-    try:
-        with urllib.request.urlopen(req,timeout=18) as r: data=json.load(r)
-        for x in data.get("hits",[]):
-            results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"icon":x.get("icon_url",""),"downloads":x.get("downloads",0),"source":"modrinth"})
-    except Exception as e:
-        errors.append("Modrinth: "+str(e)[:180])
-    try:
-        endpoint=("https://api.spiget.org/v2/search/resources/"+quote(query,safe="") if query else "https://api.spiget.org/v2/resources")
-        endpoint+=("?size=8&field=name&sort=-downloads" if query else "?size=8&sort=-downloads")
-        req=urllib.request.Request(endpoint,headers=ua)
-        with urllib.request.urlopen(req,timeout=18) as r: items=json.load(r)
-        for x in items if isinstance(items,list) else []:
-            rid=x.get("id")
-            if rid is not None:
-                results.append({"id":str(rid),"name":x.get("name","Spigot resource"),"description":x.get("tag","") or x.get("description",""),"icon":(x.get("icon") or {}).get("url","") if isinstance(x.get("icon"),dict) else "","downloads":x.get("downloads",0),"source":"spiget"})
-    except Exception as e:
-        errors.append("Spiget: "+str(e)[:180])
-    results.sort(key=lambda x:int(x.get("downloads") or 0),reverse=True)
-    if not results and errors: raise ValueError("Plugin catalogues could not be reached. "+" | ".join(errors))
-    return {"plugins":results[:16],"warnings":errors}
-
-def install_plugin(sid, project_id, source="modrinth"):
+    if source not in ("modrinth","spiget"): raise ValueError("Choose Modrinth or Spiget as the plugin source.")
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
-    if meta.get("software","paper") not in ("paper","purpur","folia","spigot"): raise ValueError("The plugin installer supports Paper, Purpur, Folia and Spigot game servers only.")
-    # Plugin JARs can be placed while online; Paper loads them on next restart.
+    software=str(meta.get("software","paper")).lower()
+    if software not in ("paper","purpur","folia","spigot"): raise ValueError("Plugin search supports Paper, Purpur, Folia and Spigot servers only.")
+    ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/onion-hub)"}
+    results=[]; warnings=[]; limit=12
+    try:
+        if source=="modrinth":
+            facets='[["project_type:plugin"],["categories:paper"]]'
+            params="limit="+str(limit)+"&offset="+str(page*limit)+"&index=downloads&facets="+quote(facets)
+            if query: params+="&query="+quote(query)
+            req=urllib.request.Request("https://api.modrinth.com/v2/search?"+params,headers=ua)
+            with urllib.request.urlopen(req,timeout=20) as r: data=json.load(r)
+            for x in data.get("hits",[]):
+                results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"icon":x.get("icon_url",""),"downloads":x.get("downloads",0),"source":"modrinth","installed":False})
+            total=int(data.get("total_hits",0))
+            has_next=(page+1)*limit<total
+        else:
+            if query:
+                endpoint="https://api.spiget.org/v2/search/resources/"+quote(query,safe="")+"?size="+str(limit)+"&page="+str(page)+"&field=name&sort=-downloads"
+            else:
+                endpoint="https://api.spiget.org/v2/resources?size="+str(limit)+"&page="+str(page)+"&sort=-downloads"
+            req=urllib.request.Request(endpoint,headers=ua)
+            with urllib.request.urlopen(req,timeout=20) as r: items=json.load(r)
+            for x in items if isinstance(items,list) else []:
+                rid=x.get("id")
+                if rid is not None:
+                    results.append({"id":str(rid),"name":x.get("name","Spigot resource"),"description":x.get("tag","") or x.get("description",""),"icon":(x.get("icon") or {}).get("url","") if isinstance(x.get("icon"),dict) else "","downloads":x.get("downloads",0),"source":"spiget","installed":False})
+            has_next=len(results)==limit
+            total=None
+    except Exception as e:
+        raise ValueError(source.title()+" catalogue search failed: "+str(e)[:240])
+    plugin_dir=folder/"plugins"
+    jars=[p for p in plugin_dir.glob("*.jar") if p.is_file() and not p.is_symlink()] if plugin_dir.is_dir() else []
+    installed_names={p.stem.lower().replace(" ","").replace("_","").replace("-","") for p in jars}
+    for item in results:
+        norm=str(item.get("name","")).lower().replace(" ","").replace("_","").replace("-","")
+        item["installed"]=norm in installed_names
+    return {"plugins":results,"source":source,"page":page,"pageSize":limit,"total":total,"hasNext":has_next,"hasPrevious":page>0,"minecraftVersion":str(meta.get("version","")),"software":software,"warnings":warnings}
+
+def plugin_versions(sid, project_id, source="modrinth"):
+    source=str(source or "modrinth").lower()
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    software=str(meta.get("software","paper")).lower()
+    if software not in ("paper","purpur","folia","spigot"): raise ValueError("This server software is not supported by the plugin installer.")
+    mc=str(meta.get("version",""))
+    ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/onion-hub)"}
+    versions=[]
+    if source=="modrinth":
+        if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid Modrinth project ID.")
+        url="https://api.modrinth.com/v2/project/"+str(project_id)+"/version"
+        with urllib.request.urlopen(urllib.request.Request(url,headers=ua),timeout=20) as r: raw=json.load(r)
+        loader_alias={"paper":["paper"],"purpur":["paper"],"folia":["paper","folia"],"spigot":["paper","spigot"]}
+        accepted=loader_alias.get(software,["paper"])
+        for v in raw:
+            if mc not in v.get("game_versions",[]): continue
+            if not any(str(x).lower() in accepted for x in v.get("loaders",[])): continue
+            f=next((x for x in v.get("files",[]) if x.get("primary")),v.get("files",[None])[0] if v.get("files") else None)
+            if not f: continue
+            versions.append({"id":v.get("id"),"version":v.get("version_number") or v.get("name"),"name":v.get("name"),"date":v.get("date_published"),"type":v.get("version_type","release"),"recommended":False,"file":f.get("filename")})
+        versions.sort(key=lambda x:x.get("date") or "",reverse=True)
+        if versions: versions[0]["recommended"]=True
+        return {"versions":versions,"recommended":versions[0]["id"] if versions else None,"compatibility":"Exact Minecraft version and loader match","minecraftVersion":mc,"source":source}
     if source=="spiget":
-        if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID")
-        req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id)),headers={"User-Agent":"OMCP/0.6"})
-        with urllib.request.urlopen(req,timeout=20) as r: resource=json.load(r)
-        # Let Spiget resolve external download redirects; the JAR signature/size checks below still validate the result.
-        req=urllib.request.Request("https://api.spiget.org/v2/resources/"+str(int(project_id))+"/download",headers={"User-Agent":"OMCP/0.6"})
-        with urllib.request.urlopen(req,timeout=60) as r:
-            raw=r.read(50*1024*1024+1)
-            cd=r.headers.get("Content-Disposition","")
-        if len(raw)>50*1024*1024 or not zipfile.is_zipfile(__import__("io").BytesIO(raw)): raise ValueError("Spiget download is not a valid JAR or exceeds 50 MB")
-        match=re.search(r'filename="?([^";]+)',cd)
-        filename=Path(match.group(1) if match else (str(resource.get("name","plugin")).replace(" ","_")+".jar")).name
-        if not filename.lower().endswith(".jar"): filename+=".jar"
-        if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.jar",filename): raise ValueError("Unsafe plugin filename")
+        if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID.")
+        resource_url="https://api.spiget.org/v2/resources/"+str(int(project_id))
+        with urllib.request.urlopen(urllib.request.Request(resource_url,headers=ua),timeout=20) as r: resource=json.load(r)
+        url="https://api.spiget.org/v2/resources/"+str(int(project_id))+"/versions?size=100&page=0&sort=-releaseDate"
+        with urllib.request.urlopen(urllib.request.Request(url,headers=ua),timeout=20) as r: raw=json.load(r)
+        tested=resource.get("testedVersions") or []
+        exact_tested=not tested or mc in [str(v) for v in tested]
+        for v in raw if isinstance(raw,list) else []:
+            vid=v.get("id")
+            if vid is None: continue
+            versions.append({"id":str(vid),"version":str(v.get("name") or ("Version "+str(vid))),"name":v.get("name") or "Spigot release","date":v.get("releaseDate"),"type":"release","recommended":False,"file":None})
+        versions.sort(key=lambda x:int(x["id"]) if str(x["id"]).isdigit() else 0,reverse=True)
+        if versions: versions[0]["recommended"]=True
+        return {"versions":versions,"recommended":versions[0]["id"] if versions else None,"compatibility":"Spiget tested versions match" if exact_tested else "Spiget resource does not list this Minecraft version as tested","minecraftVersion":mc,"testedVersions":tested,"source":source}
+    raise ValueError("Unknown plugin source. Choose Modrinth or Spiget.")
+
+def _plugin_install_error(exc, source, mc):
+    message=str(exc)
+    low=message.lower()
+    if "404" in low or "not found" in low: reason="The selected plugin version or download file no longer exists."
+    elif "timed out" in low or "timeout" in low: reason="The catalogue or download server timed out. Check VPS internet/DNS and retry."
+    elif "403" in low or "401" in low: reason="The catalogue denied the request. The resource may be restricted or its download host may require access."
+    elif "valid jar" in low or "archive" in low: reason="The downloaded file is not a valid Java plugin JAR (or is larger than 50 MB)."
+    elif "already installed" in low: reason="A file with this plugin filename already exists in the plugins folder."
+    elif "compatible" in low or "minecraft" in low or "loader" in low: reason="No release could be verified for this server's Minecraft version/software."
+    else: reason="The installer could not complete the download or validation."
+    return "Plugin installation failed ("+source+", Minecraft "+mc+"). "+reason+" Technical detail: "+message[:300]
+
+def install_plugin(sid, project_id, source="modrinth", version_id=""):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    software=str(meta.get("software","paper")).lower(); mc=str(meta.get("version",""))
+    if software not in ("paper","purpur","folia","spigot"): raise ValueError("The plugin installer supports Paper, Purpur, Folia and Spigot game servers only.")
+    source=str(source or "modrinth").lower()
+    try:
+        ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/onion-hub)"}
+        if source=="spiget":
+            if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID.")
+            rid=str(int(project_id))
+            with urllib.request.urlopen(urllib.request.Request("https://api.spiget.org/v2/resources/"+rid,headers=ua),timeout=20) as r: resource=json.load(r)
+            if version_id:
+                if not str(version_id).isdigit(): raise ValueError("Invalid Spiget version ID.")
+                endpoint="https://api.spiget.org/v2/resources/"+rid+"/versions/"+str(int(version_id))+"/download"
+                version_label=str(version_id)
+            else:
+                endpoint="https://api.spiget.org/v2/resources/"+rid+"/download"
+                version_label="latest"
+            req=urllib.request.Request(endpoint,headers=ua)
+            with urllib.request.urlopen(req,timeout=60) as r:
+                raw=r.read(50*1024*1024+1); cd=r.headers.get("Content-Disposition","")
+            match=re.search(r'filename="?([^";]+)',cd)
+            filename=Path(match.group(1) if match else (str(resource.get("name","plugin")).replace(" ","_")+".jar")).name
+            if not filename.lower().endswith(".jar"): filename+=".jar"
+            version_text=version_label
+        elif source=="modrinth":
+            if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid Modrinth project ID.")
+            if not version_id: raise ValueError("Choose a plugin version before installing.")
+            req=urllib.request.Request("https://api.modrinth.com/v2/version/"+quote(str(version_id),safe=""),headers=ua)
+            with urllib.request.urlopen(req,timeout=20) as r: chosen=json.load(r)
+            if str(chosen.get("project_id"))!=str(project_id): raise ValueError("The selected version does not belong to this plugin.")
+            loader_alias={"paper":["paper"],"purpur":["paper"],"folia":["paper","folia"],"spigot":["paper","spigot"]}
+            if mc not in chosen.get("game_versions",[]): raise ValueError("Selected version does not support Minecraft "+mc+".")
+            if not any(str(x).lower() in loader_alias.get(software,["paper"]) for x in chosen.get("loaders",[])): raise ValueError("Selected version does not list a compatible "+software+" loader.")
+            files=chosen.get("files",[]); file=next((x for x in files if x.get("primary")),files[0] if files else None)
+            if not file: raise ValueError("Selected release has no downloadable file.")
+            filename=Path(file.get("filename","")).name
+            with urllib.request.urlopen(urllib.request.Request(file["url"],headers=ua),timeout=60) as r: raw=r.read(50*1024*1024+1)
+            version_text=str(chosen.get("version_number") or chosen.get("name") or version_id)
+        else:
+            raise ValueError("Unknown catalogue. Choose Modrinth or Spiget.")
+        if len(raw)>50*1024*1024 or not zipfile.is_zipfile(__import__("io").BytesIO(raw)): raise ValueError("Downloaded file is not a valid JAR archive or exceeds 50 MB.")
+        if not filename.lower().endswith(".jar") or not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.jar",filename): raise ValueError("Download filename is not a safe .jar filename.")
         dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
-        if target.exists(): raise ValueError("A plugin with this filename is already installed")
+        if target.exists(): raise ValueError("A plugin with this filename is already installed: "+filename)
         tmp=target.with_name(target.name+".omcp-tmp")
         try:
             tmp.write_bytes(raw); os.replace(tmp,target)
         finally:
             if tmp.exists(): tmp.unlink()
-        return {"installed":filename,"path":"plugins/"+filename,"source":"spiget","restartRequired":True}
-    if source!="modrinth": raise ValueError("Unknown plugin catalogue")
-    if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid plugin project ID")
-    req=urllib.request.Request("https://api.modrinth.com/v2/project/"+project_id+"/version",headers={"User-Agent":"OMCP/0.6 (https://github.com/nmronion-alt/onion-hub)"})
-    with urllib.request.urlopen(req,timeout=20) as r: versions=json.load(r)
-    compatible=[v for v in versions if meta["version"] in v.get("game_versions",[]) and any(x.lower() in ("paper","spigot","purpur","folia") for x in v.get("loaders",[]))]
-    if not compatible: raise ValueError("No Paper-compatible release found for Minecraft "+meta["version"])
-    compatible.sort(key=lambda v:v.get("date_published",""),reverse=True)
-    chosen=compatible[0]; files=chosen.get("files",[])
-    file=next((x for x in files if x.get("primary")),files[0] if files else None)
-    if not file: raise ValueError("Plugin release has no downloadable file")
-    filename=Path(file.get("filename","")).name
-    if not filename.lower().endswith(".jar") or not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.jar",filename): raise ValueError("Plugin download is not a valid JAR filename")
-    with urllib.request.urlopen(urllib.request.Request(file["url"],headers={"User-Agent":"OMCP/0.5"}),timeout=60) as r: raw=r.read(50*1024*1024+1)
-    if len(raw)>50*1024*1024 or not zipfile.is_zipfile(__import__("io").BytesIO(raw)): raise ValueError("Downloaded plugin JAR failed validation or exceeds 50 MB")
-    dest=folder/"plugins"; dest.mkdir(exist_ok=True); target=dest/filename
-    if target.exists(): raise ValueError("A plugin with this filename is already installed")
-    tmp=target.with_name(target.name+".omcp-tmp")
-    try:
-        tmp.write_bytes(raw); os.replace(tmp,target)
-    finally:
-        if tmp.exists(): tmp.unlink()
-    return {"installed":filename,"path":"plugins/"+filename,"version":chosen.get("version_number"),"restartRequired":True}
+        return {"installed":filename,"path":"plugins/"+filename,"source":source,"version":version_text,"restartRequired":True,"serverRunning":server_running(sid),"diagnosis":"Download validated as a JAR and saved successfully. Restart the server when you are ready to load it."}
+    except Exception as e:
+        raise ValueError(_plugin_install_error(e,source,mc))
 
 def server_metrics(sid):
     folder=safe_dir(sid); pids=server_processes(sid); pid=pids[0] if pids else None
@@ -1263,10 +1335,13 @@ class Handler(BaseHTTPRequestHandler):
                 return send(self,200,{"name":meta.get("name","Minecraft"),"memory":meta.get("memory",2),"memoryMax":physical_ram_gb(),"cpuLimit":meta.get("cpuLimit",0),"cpuMax":10000,"javaPath":meta.get("javaPath",""),"runtimes":java_runtimes()})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/search",path)
             if x:
-                sid=x.group(1); meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-                if meta.get("software","paper") not in ("paper","purpur","folia","spigot"): raise ValueError("Plugin installation is available for Paper, Purpur, Folia and Spigot game servers only")
-                q=parse_qs(urlparse(self.path).query).get("q",[""])[0]
-                return send(self,200,plugin_search(q))
+                sid=x.group(1); params=parse_qs(urlparse(self.path).query)
+                q=params.get("q",[""])[0]; source=params.get("source",["modrinth"])[0]; page=params.get("page",["0"])[0]
+                return send(self,200,plugin_search(sid,q,source,int(page)))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/versions",path)
+            if x:
+                params=parse_qs(urlparse(self.path).query)
+                return send(self,200,plugin_versions(x.group(1),params.get("id",[""])[0],params.get("source",["modrinth"])[0]))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/archive",path)
             if x:
                 folder=safe_dir(x.group(1)); rel=parse_qs(urlparse(self.path).query).get("path",[""])[0]
@@ -1407,7 +1482,7 @@ class Handler(BaseHTTPRequestHandler):
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/sftp/reset",path)
             if x: return send(self,200,reset_sftp_password(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
-            if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId","")),str(d.get("source","modrinth"))))
+            if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId","")),str(d.get("source","modrinth")),str(d.get("versionId",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
