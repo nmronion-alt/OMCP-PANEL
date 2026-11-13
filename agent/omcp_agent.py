@@ -758,6 +758,17 @@ def plugin_search(sid, query="", source="modrinth", page=0):
     plugin_dir=folder/"plugins"
     jars=[p for p in plugin_dir.glob("*.jar") if p.is_file() and not p.is_symlink()] if plugin_dir.is_dir() else []
     installed_names={p.stem.lower().replace(" ","").replace("_","").replace("-","") for p in jars}
+    for jar in jars:
+        try:
+            with zipfile.ZipFile(jar) as archive:
+                for descriptor in ("plugin.yml","paper-plugin.yml","bungee.yml"):
+                    if descriptor not in archive.namelist(): continue
+                    raw=archive.read(descriptor).decode("utf-8","replace")
+                    match=re.search(r"(?m)^\\s*name\\s*:\\s*['\\\"]?([^'\\\"#\\r\\n]+)",raw)
+                    if match:
+                        installed_names.add(match.group(1).strip().lower().replace(" ","").replace("_","").replace("-",""))
+        except Exception:
+            continue
     for item in results:
         norm=str(item.get("name","")).lower().replace(" ","").replace("_","").replace("-","")
         item["installed"]=norm in installed_names
@@ -783,7 +794,7 @@ def plugin_versions(sid, project_id, source="modrinth"):
             f=next((x for x in v.get("files",[]) if x.get("primary")),v.get("files",[None])[0] if v.get("files") else None)
             if not f: continue
             versions.append({"id":v.get("id"),"version":v.get("version_number") or v.get("name"),"name":v.get("name"),"date":v.get("date_published"),"type":v.get("version_type","release"),"recommended":False,"file":f.get("filename")})
-        versions.sort(key=lambda x:x.get("date") or "",reverse=True)
+        versions.sort(key=lambda x:(0 if x.get("type")=="release" else 1,x.get("date") or ""),reverse=False)
         if versions: versions[0]["recommended"]=True
         return {"versions":versions,"recommended":versions[0]["id"] if versions else None,"compatibility":"Exact Minecraft version and loader match","minecraftVersion":mc,"source":source}
     if source=="spiget":
