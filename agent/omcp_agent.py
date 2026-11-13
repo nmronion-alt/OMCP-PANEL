@@ -979,7 +979,7 @@ def write_server_properties(sid, changes):
         "difficulty":("enum",["peaceful","easy","normal","hard"]),"white-list":("bool",),
         "online-mode":("bool",),"allow-flight":("bool",),"force-gamemode":("bool",),
         "spawn-protection":("int",0,1000000),"require-resource-pack":("bool",),
-        "resource-pack":("url",),"resource-pack-prompt":("text",),"level-name":("world",),"level-seed":("seed",),"hardcore":("bool",),"generate-structures":("bool",),"allow-nether":("bool",),"pvp":("bool",),"spawn-monsters":("bool",),"spawn-animals":("bool",),"spawn-npcs":("bool",),"view-distance":("int",2,32),"simulation-distance":("int",2,32),"max-world-size":("int",1,29999984)
+        "resource-pack":("url",),"resource-pack-prompt":("text",),"motd":("motd",),"level-name":("world",),"level-seed":("seed",),"hardcore":("bool",),"generate-structures":("bool",),"allow-nether":("bool",),"pvp":("bool",),"spawn-monsters":("bool",),"spawn-animals":("bool",),"spawn-npcs":("bool",),"view-distance":("int",2,32),"simulation-distance":("int",2,32),"max-world-size":("int",1,29999984)
     }
     current=read_server_properties(sid)
     for key,value in changes.items():
@@ -994,6 +994,7 @@ def write_server_properties(sid, changes):
         if spec[0]=="url" and value and not re.match(r"^https://",value): raise ValueError("Resource pack URL must use HTTPS")
         if spec[0]=="world" and (not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",value) or value in (".","..")): raise ValueError("Invalid world name")
         if spec[0]=="text" and len(value)>500: raise ValueError("Prompt is too long")
+        if spec[0]=="motd" and (len(value)>256 or "\\n" in value or "\\r" in value): raise ValueError("MOTD must be a single line of at most 256 characters")
         if spec[0]=="seed" and (len(value)>128 or not re.fullmatch(r"[A-Za-z0-9 _.-]*",value)): raise ValueError("World seed must be at most 128 letters, numbers, spaces, dots, _ or -")
         current[key]=value
     lines=[]
@@ -1049,6 +1050,41 @@ def create_file_archive(sid,rel):
         elif target.is_file(): z.write(target,target.name)
         else: raise ValueError("Unsupported file type")
     return {"archived":str(dest.relative_to(folder)),"bytes":dest.stat().st_size}
+
+def extract_file_archive(sid, rel):
+    folder=safe_dir(sid); archive=server_path(folder,rel)
+    if not archive.is_file() or archive.suffix.lower()!=".zip" or archive.is_symlink():
+        raise ValueError("Select a valid .zip archive")
+    parent=archive.parent
+    temp=parent/(".omcp-extract-"+secrets.token_hex(6))
+    temp.mkdir(mode=0o700)
+    try:
+        with zipfile.ZipFile(archive,"r") as z:
+            infos=z.infolist()
+            if not infos or len(infos)>100000: raise ValueError("ZIP is empty or contains too many entries")
+            total=0
+            for info in infos:
+                name=info.filename.replace("\\\\","/")
+                norm=posixpath.normpath(name)
+                mode=(info.external_attr>>16)&0o170000
+                if name.startswith("/") or norm in ("..",".") or norm.startswith("../") or ":" in name.split("/")[0] or mode==stat.S_IFLNK:
+                    raise ValueError("Unsafe path or symbolic link found in ZIP")
+                total+=info.file_size
+                if total>8*1024*1024*1024: raise ValueError("ZIP expands beyond the 8 GB safety limit")
+            z.extractall(temp)
+        children=list(temp.iterdir())
+        if not children: raise ValueError("ZIP contains no files")
+        for child in children:
+            dest=parent/child.name
+            if dest.exists() or dest.is_symlink():
+                raise ValueError("Cannot extract because '"+child.name+"' already exists. Rename or move it first.")
+        for child in children:
+            shutil.move(str(child),str(parent/child.name))
+        archive.unlink()
+        return {"extracted":len(children),"items":[p.name for p in children]}
+    finally:
+        shutil.rmtree(temp,ignore_errors=True)
+
 
 def import_world_archive(sid, archive_rel, world_name):
     if server_running(sid): raise ValueError("Stop the server before importing a world.")
@@ -1352,6 +1388,8 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,{"saved":True,"properties":write_server_properties(x.group(1),d.get("properties",{})),"apply":"restart"})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/archive",path)
             if x: return send(self,200,create_file_archive(x.group(1),str(d.get("path",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/unarchive",path)
+            if x: return send(self,200,extract_file_archive(x.group(1),str(d.get("path",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/delete",path)
             if x: return send(self,200,delete_world(x.group(1),str(d.get("name",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds/import",path)
