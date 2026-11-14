@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 # OMCP installer for Ubuntu/Debian. Supports systemd VPS and no-systemd shells.
-REPO="https://raw.githubusercontent.com/nmronion-alt/onion-hub/main"
+REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
