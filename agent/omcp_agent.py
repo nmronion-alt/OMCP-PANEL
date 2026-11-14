@@ -194,9 +194,45 @@ def start_sftp_service():
         SFTP_STATE={"available":False,"status":"error","error":str(e),"fingerprint":""}
         print("OMCP SFTP could not start: "+str(e),flush=True)
 
+
+def start_sftp_pinggy():
+    entry=SFTP_TUNNELS.get("main")
+    if entry and entry["proc"].poll() is None:
+        return {"status":"running" if entry.get("address") else "starting","host":entry.get("host"),"port":entry.get("port"),"address":entry.get("address"),"logs":"\n".join(entry.get("lines",[])[-20:])}
+    ssh=shutil.which("ssh")
+    if not ssh: raise ValueError("OpenSSH client is not installed; rerun the OMCP installer.")
+    askpass=ROOT/"pinggy-sftp-askpass.sh"
+    askpass.write_text("#!/bin/sh\nprintf '\\n'\n")
+    os.chmod(askpass,0o700)
+    env=os.environ.copy()
+    env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
+    cmd=[ssh,"-T","-p","443","-o","ConnectTimeout=20","-o","ConnectionAttempts=2","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password","-o","PasswordAuthentication=yes","-o","KbdInteractiveAuthentication=no","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=20","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(SFTP_PORT),"tcp@free.pinggy.io"]
+    proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
+    entry={"proc":proc,"lines":[],"address":None,"host":None,"port":None,"started":int(time.time())}
+    SFTP_TUNNELS["main"]=entry
+    def collect():
+        try:
+            for line in proc.stdout:
+                line=line.rstrip()
+                entry["lines"].append(line); entry["lines"]=entry["lines"][-80:]
+                match=re.search(r"tcp://((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}):(\d{2,5})",line)
+                if match:
+                    entry["host"]=match.group(1); entry["port"]=int(match.group(2)); entry["address"]=entry["host"]+":"+str(entry["port"])
+        except Exception as e: entry["lines"].append("SFTP Pinggy output error: "+str(e))
+    threading.Thread(target=collect,daemon=True).start()
+    deadline=time.time()+30
+    while time.time()<deadline:
+        if entry.get("address"):
+            return {"status":"running","host":entry["host"],"port":entry["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
+        if proc.poll() is not None:
+            time.sleep(0.2)
+            raise ValueError("Pinggy SFTP tunnel exited. "+"\\n".join(entry["lines"][-20:])[-1400:])
+        time.sleep(0.25)
+    return {"status":"starting","host":None,"port":None,"address":None,"logs":"\n".join(entry["lines"][-20:])}
+
 def sftp_info(sid):
     meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-    return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":SFTP_PORT,"fingerprint":SFTP_STATE.get("fingerprint","")}
+    t=SFTP_TUNNELS.get("main") or {}; return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":t.get("port") or SFTP_PORT,"host":t.get("host") or "Not generated","fingerprint":SFTP_STATE.get("fingerprint",""),"tunnelStatus":"running" if t.get("address") else ("starting" if t and t["proc"].poll() is None else "stopped")}
 
 def reset_sftp_password(sid):
     if not SFTP_STATE.get("available"): raise ValueError(SFTP_STATE.get("error") or "SFTP service is not running")
@@ -204,7 +240,7 @@ def reset_sftp_password(sid):
     password=secrets.token_urlsafe(18)
     meta["sftp"]={"password_hash":password_hash(password),"created":int(time.time())}
     atomic_json(folder/"omcp.json",meta)
-    return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":SFTP_PORT,"fingerprint":SFTP_STATE.get("fingerprint","")}
+    tunnel=start_sftp_pinggy(); return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":tunnel.get("port") or SFTP_PORT,"host":tunnel.get("host") or "Pending","tunnelStatus":tunnel.get("status"),"tunnelLogs":tunnel.get("logs",""),"fingerprint":SFTP_STATE.get("fingerprint","")}
 
 
 def _mc_varint(n):
