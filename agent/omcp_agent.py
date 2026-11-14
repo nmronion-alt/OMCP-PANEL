@@ -196,7 +196,8 @@ def start_sftp_service():
 
 
 def start_sftp_pinggy():
-    entry=SFTP_TUNNELS.get("main")
+    tunnels=globals().setdefault("SFTP_TUNNELS",{})
+    entry=tunnels.get("main")
     if entry and entry["proc"].poll() is None:
         return {"status":"running" if entry.get("address") else "starting","host":entry.get("host"),"port":entry.get("port"),"address":entry.get("address"),"logs":"\n".join(entry.get("lines",[])[-20:])}
     ssh=shutil.which("ssh")
@@ -209,7 +210,7 @@ def start_sftp_pinggy():
     cmd=[ssh,"-T","-p","443","-o","ConnectTimeout=20","-o","ConnectionAttempts=2","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password","-o","PasswordAuthentication=yes","-o","KbdInteractiveAuthentication=no","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=20","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(SFTP_PORT),"tcp@free.pinggy.io"]
     proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
     entry={"proc":proc,"lines":[],"address":None,"host":None,"port":None,"started":int(time.time())}
-    SFTP_TUNNELS["main"]=entry
+    tunnels["main"]=entry
     def collect():
         try:
             for line in proc.stdout:
@@ -232,7 +233,7 @@ def start_sftp_pinggy():
 
 def sftp_info(sid):
     meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-    t=SFTP_TUNNELS.get("main") or {}; return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":t.get("port") or SFTP_PORT,"host":t.get("host") or "Not generated","fingerprint":SFTP_STATE.get("fingerprint",""),"tunnelStatus":"running" if t.get("address") else ("starting" if t and t["proc"].poll() is None else "stopped")}
+    t=globals().get("SFTP_TUNNELS",{}).get("main") or {}; return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":t.get("port") or SFTP_PORT,"host":t.get("host") or "Not generated","fingerprint":SFTP_STATE.get("fingerprint",""),"tunnelStatus":"running" if t.get("address") else ("starting" if t and t["proc"].poll() is None else "stopped")}
 
 def reset_sftp_password(sid):
     if not SFTP_STATE.get("available"): raise ValueError(SFTP_STATE.get("error") or "SFTP service is not running")
