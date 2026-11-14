@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct
 try:
     import paramiko
 except ImportError:
@@ -205,6 +205,104 @@ def reset_sftp_password(sid):
     meta["sftp"]={"password_hash":password_hash(password),"created":int(time.time())}
     atomic_json(folder/"omcp.json",meta)
     return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":SFTP_PORT,"fingerprint":SFTP_STATE.get("fingerprint","")}
+
+
+def _mc_varint(n):
+    out=bytearray()
+    while True:
+        b=n & 0x7f; n >>= 7
+        if n: out.append(b|0x80)
+        else: out.append(b); return bytes(out)
+
+def _mc_read_varint(sock):
+    value=0
+    for shift in range(0,35,7):
+        b=sock.recv(1)
+        if not b: raise OSError("Minecraft status connection closed")
+        c=b[0]; value |= (c&0x7f)<<shift
+        if not c&0x80: return value
+    raise ValueError("Invalid Minecraft status packet")
+
+def _mc_read_exact(sock,n):
+    data=b""
+    while len(data)<n:
+        part=sock.recv(n-len(data))
+        if not part: raise OSError("Minecraft status response ended early")
+        data+=part
+    return data
+
+def minecraft_online_players(sid):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    port=int(meta.get("port",25565)); host="127.0.0.1"; hb=host.encode()
+    handshake=_mc_varint(0)+_mc_varint(47)+_mc_varint(len(hb))+hb+struct.pack(">H",port)+_mc_varint(1)
+    with socket.create_connection((host,port),timeout=2.5) as sock:
+        sock.settimeout(2.5); packet=_mc_varint(len(handshake))+handshake
+        sock.sendall(packet+b"\x01\x00")
+        size=_mc_read_varint(sock)
+        if size>1024*1024: raise ValueError("Minecraft status response is too large")
+        payload=_mc_read_exact(sock,size)
+    if not payload or payload[0]!=0: raise ValueError("Unexpected Minecraft status response")
+    length=0; offset=1; shift=0
+    while True:
+        b=payload[offset]; offset+=1; length|=(b&0x7f)<<shift
+        if not b&0x80: break
+        shift+=7
+        if shift>28: raise ValueError("Invalid status JSON length")
+    status=json.loads(payload[offset:offset+length].decode("utf-8"))
+    sample=(status.get("players") or {}).get("sample") or []; players=[]
+    for item in sample:
+        name=str(item.get("name","")).strip(); uid=str(item.get("id","")).replace("-","").lower()
+        if name and re.fullmatch(r"[0-9a-f]{32}",uid): players.append({"name":name,"uuid":uid})
+    p=status.get("players") or {}
+    return {"online":players,"onlineCount":int(p.get("online",len(players))),"maxPlayers":int(p.get("max",0))}
+
+def player_lists(sid):
+    folder=safe_dir(sid)
+    live=minecraft_online_players(sid) if server_running(sid) else {"online":[],"onlineCount":0,"maxPlayers":0}
+    def read_json(name):
+        p=folder/name
+        if not p.exists(): return []
+        try:
+            data=json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data,list) else []
+        except Exception: return []
+    banned=read_json("banned-players.json"); ops=read_json("ops.json")
+    banned_ids={str(x.get("uuid","")).replace("-","").lower() for x in banned}
+    op_ids={str(x.get("uuid","")).replace("-","").lower() for x in ops}
+    for p in live["online"]:
+        p["banned"]=p["uuid"] in banned_ids; p["operator"]=p["uuid"] in op_ids
+    return {"players":live["online"],"onlineCount":live["onlineCount"],"maxPlayers":live["maxPlayers"],
+            "banned":[{"name":str(x.get("name","Unknown")),"uuid":str(x.get("uuid","")).replace("-","").lower()} for x in banned],
+            "running":server_running(sid)}
+
+def player_action(sid, action, name, uuid):
+    action=str(action).lower(); name=str(name).strip(); uuid=str(uuid).replace("-","").lower()
+    if action not in ("ban","unban","op"): raise ValueError("Unsupported player action")
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,16}",name) or not re.fullmatch(r"[0-9a-f]{32}",uuid): raise ValueError("Invalid player identity")
+    folder=safe_dir(sid)
+    def load(filename):
+        p=folder/filename
+        if not p.exists(): return []
+        try:
+            value=json.loads(p.read_text(encoding="utf-8"))
+            return value if isinstance(value,list) else []
+        except Exception: raise ValueError(filename+" is invalid JSON; repair it before changing player permissions")
+    def save(filename,data):
+        p=folder/filename; tmp=p.with_name(p.name+".tmp")
+        tmp.write_text(json.dumps(data,indent=2)+"\n",encoding="utf-8"); os.replace(tmp,p)
+    if action in ("ban","unban"):
+        items=load("banned-players.json")
+        if action=="ban":
+            if not any(str(x.get("uuid","")).replace("-","").lower()==uuid for x in items):
+                items.append({"uuid":uuid,"name":name,"created":time.strftime("%Y-%m-%d %H:%M:%S",time.gmtime()),"source":"OMCP","expires":"forever","reason":"Banned via OMCP"})
+        else: items=[x for x in items if str(x.get("uuid","")).replace("-","").lower()!=uuid]
+        save("banned-players.json",items)
+    else:
+        items=load("ops.json")
+        if not any(str(x.get("uuid","")).replace("-","").lower()==uuid for x in items):
+            items.append({"uuid":uuid,"name":name,"level":4,"bypassesPlayerLimit":False})
+        save("ops.json",items)
+    return {"success":True,"action":action,"name":name,"note":"Player permission files updated directly; no console command was sent."}
 
 def password_ok(password, record):
     import base64, hashlib
@@ -1294,6 +1392,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not u: return send(self,401,{"error":"Account no longer exists"})
                 return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/players",path)
+            if x: return send(self,200,player_lists(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/properties",path)
             if x: return send(self,200,{"properties":read_server_properties(x.group(1)),"running":server_running(x.group(1))})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/worlds",path)
@@ -1503,6 +1603,8 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,reset_sftp_password(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
             if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId","")),str(d.get("source","modrinth")),str(d.get("versionId",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/players/action",path)
+            if x: return send(self,200,player_action(x.group(1),str(d.get("action","")),str(d.get("name","")),str(d.get("uuid",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
             if x:
                 sid=x.group(1); folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
