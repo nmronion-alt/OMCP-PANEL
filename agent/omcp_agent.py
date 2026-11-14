@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io
 try:
     import paramiko
 except ImportError:
@@ -303,6 +303,118 @@ def player_action(sid, action, name, uuid):
             items.append({"uuid":uuid,"name":name,"level":4,"bypassesPlayerLimit":False})
         save("ops.json",items)
     return {"success":True,"action":action,"name":name,"note":"Player permission files updated directly; no console command was sent."}
+
+
+def modrinth_search(sid, query="", kind="mod", page=0):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    if str(meta.get("software","")).lower()!="fabric": raise ValueError("Modrinth Mods is available only when this server uses Fabric.")
+    kind=str(kind).lower()
+    if kind not in ("mod","modpack"): raise ValueError("Choose Mods or Modpacks.")
+    page=max(0,min(int(page or 0),500)); query=str(query or "").strip()
+    facets=json.dumps([["project_type:"+kind]])
+    params="limit=12&offset="+str(page*12)+"&index=downloads&facets="+quote(facets)
+    if query: params+="&query="+quote(query)
+    req=urllib.request.Request("https://api.modrinth.com/v2/search?"+params,headers={"User-Agent":"OMCP/1.0"})
+    with urllib.request.urlopen(req,timeout=25) as r: data=json.load(r)
+    results=[]
+    for x in data.get("hits",[]):
+        results.append({"id":x.get("project_id"),"slug":x.get("slug"),"name":x.get("title"),"description":x.get("description",""),"icon":x.get("icon_url",""),"downloads":x.get("downloads",0),"kind":kind})
+    total=int(data.get("total_hits",0))
+    return {"results":results,"page":page,"hasPrevious":page>0,"hasNext":(page+1)*12<total,"total":total,"minecraftVersion":str(meta.get("version","")),"software":"fabric"}
+
+def modrinth_versions(sid, project_id, kind="mod"):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    if str(meta.get("software","")).lower()!="fabric": raise ValueError("Switch the server software to Fabric before installing mods.")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid Modrinth project ID.")
+    kind=str(kind).lower()
+    if kind not in ("mod","modpack"): raise ValueError("Invalid Modrinth project type.")
+    url="https://api.modrinth.com/v2/project/"+str(project_id)+"/version"
+    req=urllib.request.Request(url,headers={"User-Agent":"OMCP/1.0"})
+    with urllib.request.urlopen(req,timeout=25) as r: raw=json.load(r)
+    mc=str(meta.get("version","")); out=[]
+    for v in raw:
+        if mc not in v.get("game_versions",[]): continue
+        loaders=[str(x).lower() for x in v.get("loaders",[])]
+        if "fabric" not in loaders: continue
+        f=next((x for x in v.get("files",[]) if x.get("primary")),v.get("files",[None])[0] if v.get("files") else None)
+        if not f: continue
+        out.append({"id":v.get("id"),"version":v.get("version_number") or v.get("name"),"name":v.get("name"),"date":v.get("date_published"),"type":v.get("version_type","release"),"file":f.get("filename"),"url":f.get("url")})
+    out.sort(key=lambda x:x.get("date") or "",reverse=True); out.sort(key=lambda x:x.get("type")!="release")
+    return {"versions":out,"recommended":out[0]["id"] if out else None,"compatibility":"Fabric + exact Minecraft version match","kind":kind}
+
+def _safe_modpack_target(root, rel):
+    rel=str(rel or "").replace("\\","/")
+    p=Path(rel)
+    if not rel or p.is_absolute() or any(x in ("..","") for x in p.parts) or re.match(r"^[A-Za-z]:",rel): raise ValueError("Unsafe Modrinth modpack path")
+    target=(root/p).resolve()
+    if root.resolve() not in target.parents: raise ValueError("Modpack path escapes server directory")
+    return target
+
+def install_modrinth(sid, project_id, version_id, kind="mod"):
+    folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
+    if str(meta.get("software","")).lower()!="fabric": raise ValueError("Mods and modpacks can only be installed on Fabric servers.")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)) or not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(version_id)): raise ValueError("Invalid Modrinth project/version ID.")
+    kind=str(kind).lower()
+    if kind not in ("mod","modpack"): raise ValueError("Invalid Modrinth project type.")
+    req=urllib.request.Request("https://api.modrinth.com/v2/version/"+version_id,headers={"User-Agent":"OMCP/1.0"})
+    with urllib.request.urlopen(req,timeout=25) as r: ver=json.load(r)
+    if str(ver.get("project_id"))!=str(project_id): raise ValueError("Selected version does not belong to this project.")
+    if str(meta.get("version","")) not in ver.get("game_versions",[]) or "fabric" not in [str(x).lower() for x in ver.get("loaders",[])]: raise ValueError("This release does not match the server's Minecraft version and Fabric loader.")
+    files=ver.get("files",[]); primary=next((x for x in files if x.get("primary")),files[0] if files else None)
+    if not primary: raise ValueError("Modrinth version has no downloadable file.")
+    if kind=="mod":
+        if not str(primary.get("filename","")).lower().endswith(".jar"): raise ValueError("The selected Modrinth release is not a JAR mod.")
+        dest=folder/"mods"; dest.mkdir(exist_ok=True); name=Path(primary["filename"]).name
+        target=dest/name
+        if target.exists(): raise ValueError("A mod with this filename is already installed.")
+        req=urllib.request.Request(primary["url"],headers={"User-Agent":"OMCP/1.0"})
+        with urllib.request.urlopen(req,timeout=90) as r: raw=r.read(100*1024*1024+1)
+        if len(raw)>100*1024*1024 or not zipfile.is_zipfile(io.BytesIO(raw)): raise ValueError("Downloaded mod is not a valid JAR archive.")
+        expected=(primary.get("hashes") or {}).get("sha512")
+        if expected and hashlib.sha512(raw).hexdigest().lower()!=str(expected).lower(): raise ValueError("Mod download checksum did not match Modrinth.")
+        target.write_bytes(raw)
+        return {"installed":True,"kind":"mod","name":name,"path":"mods/"+name,"serverRunning":server_running(sid)}
+    req=urllib.request.Request(primary["url"],headers={"User-Agent":"OMCP/1.0"})
+    with urllib.request.urlopen(req,timeout=120) as r: archive=r.read(1024*1024*1024+1)
+    if len(archive)>1024*1024*1024: raise ValueError("Modpack archive exceeds 1 GB.")
+    try: z=zipfile.ZipFile(io.BytesIO(archive))
+    except Exception: raise ValueError("Modrinth modpack is not a valid ZIP archive.")
+    with z:
+        try: index=json.loads(z.read("modrinth.index.json"))
+        except Exception: raise ValueError("Modrinth modpack is missing modrinth.index.json.")
+        if index.get("formatVersion")!=1: raise ValueError("Unsupported Modrinth modpack format.")
+        server_root=folder
+        installed=0; skipped=0; total_size=0
+        for item in index.get("files",[]):
+            env=item.get("env") or {}
+            if env.get("server")=="unsupported": skipped+=1; continue
+            path=_safe_modpack_target(server_root,item.get("path",""))
+            downloads=item.get("downloads") or []
+            if not downloads: skipped+=1; continue
+            url=downloads[0]
+            req=urllib.request.Request(url,headers={"User-Agent":"OMCP/1.0"})
+            with urllib.request.urlopen(req,timeout=90) as resp: raw=resp.read(250*1024*1024+1)
+            if len(raw)>250*1024*1024: raise ValueError("A modpack file exceeds 250 MB.")
+            total_size+=len(raw)
+            if total_size>2*1024*1024*1024: raise ValueError("Modpack download exceeds 2 GB.")
+            expected=(item.get("hashes") or {}).get("sha512")
+            if expected and hashlib.sha512(raw).hexdigest().lower()!=str(expected).lower(): raise ValueError("Modpack file checksum failed: "+str(item.get("path")))
+            path.parent.mkdir(parents=True,exist_ok=True)
+            if path.exists(): raise ValueError("Modpack would overwrite existing server file: "+str(item.get("path")))
+            path.write_bytes(raw); installed+=1
+        # Server-side overrides are applied; client-only overrides are intentionally ignored.
+        for prefix in ("overrides/","server-overrides/"):
+            for info in z.infolist():
+                if not info.filename.startswith(prefix) or info.is_dir(): continue
+                rel=info.filename[len(prefix):]
+                if not rel: continue
+                path=_safe_modpack_target(server_root,rel)
+                if path.exists(): continue
+                path.parent.mkdir(parents=True,exist_ok=True)
+                raw=z.read(info)
+                if len(raw)>250*1024*1024: raise ValueError("Modpack override file is too large.")
+                path.write_bytes(raw); installed+=1
+    return {"installed":True,"kind":"modpack","name":str(index.get("name","Modrinth modpack")),"filesInstalled":installed,"filesSkipped":skipped,"serverRunning":server_running(sid),"note":"Server-side files and overrides imported. Review modpack requirements before starting."}
 
 def password_ok(password, record):
     import base64, hashlib
@@ -1392,6 +1504,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not u: return send(self,401,{"error":"Account no longer exists"})
                 return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/mods/search",path)
+            if x:
+                q=parse_qs(urlparse(self.path).query)
+                return send(self,200,modrinth_search(x.group(1),q.get("q",[""])[0],q.get("kind",["mod"])[0],int(q.get("page",["0"])[0])))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/mods/versions",path)
+            if x:
+                q=parse_qs(urlparse(self.path).query)
+                return send(self,200,modrinth_versions(x.group(1),q.get("id",[""])[0],q.get("kind",["mod"])[0]))
+
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/players",path)
             if x: return send(self,200,player_lists(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/properties",path)
@@ -1603,6 +1724,8 @@ class Handler(BaseHTTPRequestHandler):
             if x: return send(self,200,reset_sftp_password(x.group(1)))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/plugins/install",path)
             if x: return send(self,200,install_plugin(x.group(1),str(d.get("projectId","")),str(d.get("source","modrinth")),str(d.get("versionId",""))))
+            x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/mods/install",path)
+            if x: return send(self,200,install_modrinth(x.group(1),str(d.get("projectId","")),str(d.get("versionId","")),str(d.get("kind","mod"))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/players/action",path)
             if x: return send(self,200,player_action(x.group(1),str(d.get("action","")),str(d.get("name","")),str(d.get("uuid",""))))
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/settings",path)
