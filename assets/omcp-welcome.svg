@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<defs>
+ <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#09051d"/><stop offset=".58" stop-color="#26045b"/><stop offset="1" stop-color="#09051e"/></linearGradient>
+ <linearGradient id="water" x2="0" y2="1"><stop stop-color="#a900ff" stop-opacity=".72"/><stop offset="1" stop-color="#12052d"/></linearGradient>
+ <linearGradient id="moon" x2="0" y2="1"><stop stop-color="#fff5ff"/><stop offset="1" stop-color="#c15aff"/></linearGradient>
+ <filter id="glow"><feGaussianBlur stdDeviation="12" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+ <pattern id="stars" width="97" height="83" patternUnits="userSpaceOnUse"><circle cx="12" cy="17" r="2.5" fill="#fff"/><circle cx="71" cy="53" r="2" fill="#e7b6ff"/><path d="M44 5v16M36 13h16" stroke="#fff" stroke-width="2"/></pattern>
+</defs>
+<rect width="1600" height="900" fill="url(#sky)"/><rect width="1600" height="580" fill="url(#stars)" opacity=".8"/>
+<circle cx="250" cy="190" r="102" fill="#a100ff" opacity=".45" filter="url(#glow)"/><path d="M278 87a100 100 0 1 0 75 158A82 82 0 1 1 278 87" fill="url(#moon)" filter="url(#glow)"/>
+<g fill="#fff" filter="url(#glow)"><path d="M1000 85l8 25 25 8-25 8-8 25-8-25-25-8 25-8z"/><path d="M1330 180l6 18 18 6-18 6-6 18-6-18-18-6 18-6z"/><path d="M530 95l5 15 15 5-15 5-5 15-5-15-15-5 15-5z"/></g>
+<text x="800" y="365" text-anchor="middle" font-family="system-ui,Arial,sans-serif" font-size="122" font-weight="950" letter-spacing="5" fill="#fff0ff" stroke="#4d00a5" stroke-width="18" paint-order="stroke" filter="url(#glow)">WELCOME!</text>
+<path d="M0 520 Q220 440 420 520 T840 515 T1260 520 T1600 490 V900 H0Z" fill="#260050"/>
+<path d="M0 560 Q200 505 420 560 T840 550 T1260 560 T1600 535 V900 H0Z" fill="url(#water)"/>
+<g stroke="#ed9cff" stroke-width="4" opacity=".75"><path d="M0 620h160m60 0h240m100 0h170m120 0h220m80 0h210m90 0h150"/><path d="M80 690h240m80 0h190m140 0h250m100 0h260m70 0h160"/><path d="M0 770h190m90 0h260m120 0h210m80 0h280m80 0h230"/></g>
+<g fill="#10091e" stroke="#8d25df" stroke-width="5"><path d="M0 490h95v80H0zm110-35h80v115h-80zm95 28h85v90h-85zm104-55h90v145h-90zm110 48h90v95h-90z"/><path d="M25 510h18v22H25zm50 0h18v22H75zm65-20h18v22h-18zm75 28h18v22h-18zm125-55h18v22h-18zm52 0h18v22h-18z" fill="#f5c6ff"/></g>
+<g transform="translate(1020 500)"><rect x="0" y="190" width="350" height="24" fill="#170b28"/><path d="M65 190v-130h90v130M190 190V30h92v160" fill="#0d0919" stroke="#4b1a7a" stroke-width="10"/><path d="M40 60l70-35 70 35" fill="#1b0b2e" stroke="#e1a0ff" stroke-width="8"/><path d="M178 32l55-32 65 32" fill="#1b0b2e" stroke="#e1a0ff" stroke-width="8"/><rect x="91" y="75" width="30" height="45" fill="#e9aaff"/><rect x="220" y="60" width="30" height="48" fill="#e9aaff"/></g>
+<g transform="translate(1040 470)"><path d="M75 190l-22-105 38-75 90-20 65 44 28 156z" fill="#080712" stroke="#4e1788" stroke-width="9"/><rect x="83" y="5" width="110" height="76" rx="15" fill="#171020"/><path d="M80 5l8-35 35 15 25-35 25 32 36-15 8 38" fill="#f7b900" stroke="#ffdf55" stroke-width="9"/><path d="M113 112l45 16-10 42-43-17z" fill="#fff"/><path d="M115 116l39 14-7 29-39-15z" fill="#ff8a00"/><path d="M120 126l28 10-5 20-28-10z" fill="#168b4c"/></g>
+<g fill="#0b0615" stroke="#b75aff" stroke-width="5"><path d="M870 665q-38-55 0-100 40 40 0 100zm-55 0q-30-44 0-80 33 35 0 80z"/><path d="M920 665q-25-40 0-72 27 32 0 72z"/></g>
+<text x="800" y="850" text-anchor="middle" fill="#eac7ff" font-family="system-ui,Arial,sans-serif" font-size="28" letter-spacing="8">ONION MINECRAFT CONTROL PANEL</text>
+</svg>
