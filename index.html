@@ -168,6 +168,7 @@ function applyWorkspaceLayout(){
  if($("workspaceConsoleHeight"))$("workspaceConsoleHeight").value=height;
  let order=JSON.parse(localStorage.getItem("omcp-tab-order")||"[]");
  if(nav&&order.length){order.forEach(id=>{let b=[...nav.children].find(x=>x.dataset.serverTab===id);if(b)nav.appendChild(b)})}
+ if(nav){let plugins=[...nav.children].find(x=>x.dataset.serverTab==="plugins"),mods=[...nav.children].find(x=>x.dataset.serverTab==="mods");if(plugins&&mods)plugins.after(mods)}
 }
 function saveWorkspaceLayout(){localStorage.setItem("omcp-tab-position",$("workspaceTabPosition").value);localStorage.setItem("omcp-side-width",$("workspaceSideWidth").value);localStorage.setItem("omcp-console-height",$("workspaceConsoleHeight").value);applyWorkspaceLayout();$("workspaceLayoutMsg").textContent="Workspace layout saved."}
 $("saveWorkspaceLayout").onclick=saveWorkspaceLayout;
