@@ -555,7 +555,7 @@ def create(d):
         raise
 
 def download_server_jar(software, ver, destination):
-    headers={'User-Agent':'OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)','Accept':'application/json'}
+    headers={'User-Agent':'OMCP/0.5 (https://github.com/nmronion-alt/OMCP-PANEL)','Accept':'application/json'}
     if software in ('paper','folia','velocity','waterfall'):
         api='https://fill.papermc.io/v3/projects/'+software+'/versions/'+ver+'/builds?channel=STABLE&limit=1'
         with urllib.request.urlopen(urllib.request.Request(api,headers=headers),timeout=30) as r: builds=json.load(r)
@@ -608,7 +608,7 @@ def software_versions(software):
     if software not in ('paper','purpur','folia','spigot','velocity','waterfall','fabric','vanilla'): raise ValueError('Unsupported server software')
     cached=VERSION_CACHE.get(software)
     if cached and time.time()-cached[0]<300: return cached[1]
-    headers={'User-Agent':'OMCP/0.5 (https://github.com/nmronion-alt/onion-hub)','Accept':'application/json'}
+    headers={'User-Agent':'OMCP/0.5 (https://github.com/nmronion-alt/OMCP-PANEL)','Accept':'application/json'}
     if software in ('paper','folia','velocity','waterfall'):
         with urllib.request.urlopen(urllib.request.Request('https://fill.papermc.io/v3/projects/'+software,headers=headers),timeout=30) as r: data=json.load(r)
         versions=[v for group in data.get('versions',{}).values() for v in group]
@@ -973,7 +973,7 @@ def plugin_search(sid, query="", source="modrinth", page=0):
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text())
     software=str(meta.get("software","paper")).lower()
     if software not in ("paper","purpur","folia","spigot"): raise ValueError("Plugin search supports Paper, Purpur, Folia and Spigot servers only.")
-    ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/onion-hub)"}
+    ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/OMCP-PANEL)"}
     results=[]; warnings=[]; limit=12
     try:
         if source=="modrinth":
@@ -1029,7 +1029,7 @@ def plugin_versions(sid, project_id, source="modrinth"):
     software=str(meta.get("software","paper")).lower()
     if software not in ("paper","purpur","folia","spigot"): raise ValueError("This server software is not supported by the plugin installer.")
     mc=str(meta.get("version",""))
-    ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/onion-hub)"}
+    ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/OMCP-PANEL)"}
     versions=[]
     if source=="modrinth":
         if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}",str(project_id)): raise ValueError("Invalid Modrinth project ID.")
@@ -1087,7 +1087,7 @@ def install_plugin(sid, project_id, source="modrinth", version_id=""):
     if software not in ("paper","purpur","folia","spigot"): raise ValueError("The plugin installer supports Paper, Purpur, Folia and Spigot game servers only.")
     source=str(source or "modrinth").lower()
     try:
-        ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/onion-hub)"}
+        ua={"User-Agent":"OMCP/0.8 (https://github.com/nmronion-alt/OMCP-PANEL)"}
         if source=="spiget":
             if not str(project_id).isdigit(): raise ValueError("Invalid Spiget resource ID.")
             rid=str(int(project_id))
