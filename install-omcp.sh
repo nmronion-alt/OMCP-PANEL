@@ -8,8 +8,7 @@ if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless openssh-client
-# Optional CPU limiter used for per-server CPU percentage caps.
-DEBIAN_FRONTEND=noninteractive apt-get install -y cpulimit || echo "WARNING: cpulimit package unavailable; CPU limits will remain disabled until cpulimit is installed."
+DEBIAN_FRONTEND=noninteractive apt-get install -y cpulimit >/dev/null 2>&1 || true
 # Install Java 25 when the configured Ubuntu/Debian repositories provide it; Java 21 remains the baseline.
 if apt-cache show openjdk-25-jre-headless >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-25-jre-headless
@@ -21,8 +20,11 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
 id omcp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --create-home --shell /usr/sbin/nologin omcp
 install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
-curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py"
-curl -fsSL "$REPO/index.html" -o "$APP/index.html"
+curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py.new"
+curl -fsSL "$REPO/index.html" -o "$APP/index.html.new"
+# Publish only fully downloaded files.
+mv "$APP/omcp_agent.py.new" "$APP/omcp_agent.py"
+mv "$APP/index.html.new" "$APP/index.html"
 # Validate the complete agent source before stopping/restarting the existing process.
 python3 -m py_compile "$APP/omcp_agent.py"
 chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
