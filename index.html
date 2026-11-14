@@ -250,7 +250,7 @@ async function handlePlayerAction(e){
 
 let modPage=0,modSelected=null;
 async function loadMods(q=$("modQuery").value.trim(),page=0){
- modPage=Math.max(0,page);const kind=$("modKind").value;$("modMsg").textContent="Searching Modrinth…";$("modResults").innerHTML="";
+ modPage=Math.max(0,page);const kind=$("modKind").value;if(String(currentServerMeta?.software||"").toLowerCase()!=="fabric"){$("modMsg").textContent="Mods and modpacks require Fabric. Open Version, switch the server software to Fabric, then return here.";$("modResults").innerHTML="";$("modCompatibility").textContent="Current software: "+(currentServerMeta?.software||"unknown");$("modPrev").disabled=true;$("modNext").disabled=true;return}$("modMsg").textContent="Searching Modrinth…";$("modResults").innerHTML="";
  try{const d=await api("/api/servers/"+currentServerId+"/mods/search?q="+encodeURIComponent(q)+"&kind="+kind+"&page="+modPage);
  $("modResults").innerHTML=(d.results||[]).map(p=>'<div class="file-entry"><img src="'+esc(p.icon||"")+'" style="width:40px;height:40px;object-fit:contain" onerror="this.style.display=\'none\'"><div style="flex:1"><b>'+esc(p.name)+'</b><div class="muted">'+esc(p.description||"")+'</div><small class="muted">'+Number(p.downloads||0).toLocaleString()+' downloads · Modrinth</small></div><button class="btn secondary" data-mod-id="'+esc(p.id)+'" data-mod-name="'+esc(p.name)+'">Choose version</button></div>').join("")||'<p class="muted">No results found.</p>';
  $("modPageLabel").textContent="Page "+(modPage+1);$("modPrev").disabled=!d.hasPrevious;$("modNext").disabled=!d.hasNext;$("modCompatibility").textContent="Minecraft "+d.minecraftVersion+" · Fabric";$("modMsg").textContent=d.total+" Modrinth "+(kind==="mod"?"mods":"modpacks")+" found.";
