@@ -61,10 +61,12 @@ The management API listens on `127.0.0.1:8765` by default. The installer provide
 | 📁 **File Manager** | Browse, upload, edit, rename, delete, download and archive server files; extract ZIP archives |
 | 🌍 **World Manager** | View server worlds, import worlds from ZIP or folder, and manage eligible worlds |
 | ⚙️ **Options** | Configure common server properties, gameplay settings and MOTD with a formatted preview |
-| 🧩 **Plugins** | Browse plugin catalogues, choose available plugin versions, install plugins and see detected installed plugins |
+| 🧩 **Plugins** | Browse compatible plugin catalogues, choose versions and install plugins on supported Bukkit-based servers |
+| 🧵 **Fabric Mods** | Browse Modrinth Fabric mods and modpacks, select compatible releases and install them |
+| 👥 **Players** | Read live status samples and manage ban, unban and operator records without sending console commands |
 | 💾 **Backups** | Create ZIP backups and schedule local VPS or Google Drive backups |
-| 🔐 **SFTP** | Access server files through the panel's SFTP service |
-| 🌐 **Network Routing** | Use supported Minecraft TCP relay options and Minekube Connect integration |
+| 🔐 **SFTP** | Generate SFTP credentials and create a dedicated Pinggy TCP host for remote file clients |
+| 🌐 **Network Routing** | Use the currently implemented Pinggy, Bore and Minekube Connect routes; provider availability depends on host/network setup |
 | 📊 **Resource Information** | View host memory and CPU-thread information |
 | 👤 **Accounts** | Set up an admin account and sign in with protected password storage |
 
