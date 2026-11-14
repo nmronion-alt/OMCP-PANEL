@@ -243,7 +243,7 @@ async function handlePlayerAction(e){
  const action=b.dataset.playerAction,name=b.dataset.playerName,uuid=b.dataset.playerUuid;
  if(!await panelConfirm((action==="op"?"Make ":"")+name+(action==="ban"?" banned?":action==="unban"?" unbanned?":" an operator?")))return;
  b.disabled=true;
- try{await api("/api/servers/"+currentServerId+"/players/action",{method:"POST",body:JSON.stringify({action,name,uuid})});await loadPlayers()}
+ try{await api("/api/servers/"+currentServerId+"/players/action",{method:"POST",body:JSON.stringify({action,name,uuid})});await loadPlayers();$("playersMessage").textContent="Saved directly to player permission files. Restart the server to ensure the updated ban/operator records are loaded; no console command was sent."}
  catch(err){panelAlert("Player action failed: "+err.message);b.disabled=false}
 }
 
