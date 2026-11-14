@@ -676,7 +676,7 @@ def start(sid):
         eula_file=folder/"eula.txt"
         accepted=False
         if eula_file.exists():
-            accepted=bool(re.search(r"(?m)^\\s*eula\\s*=\\s*true\\s*$",eula_file.read_text(errors="replace"),re.I))
+            accepted=bool(re.search(r"(?m)^\s*eula\s*=\s*true\s*$",eula_file.read_text(errors="replace"),re.I))
         if not accepted: raise ValueError("EULA_REQUIRED: Please review and accept the Minecraft EULA before starting this server.")
     with LOCK:
         existing=server_processes(sid)
@@ -1815,7 +1815,7 @@ class Handler(BaseHTTPRequestHandler):
             if x:
                 folder=safe_dir(x.group(1)); meta=json.loads((folder/"omcp.json").read_text())
                 if str(meta.get("software","paper")).lower() in ("velocity","waterfall"): raise ValueError("This proxy software does not use the Minecraft server EULA file.")
-                (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).\\neula=true\\n",encoding="utf-8")
+                (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).\neula=true\n",encoding="utf-8")
                 return send(self,200,{"accepted":True})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
