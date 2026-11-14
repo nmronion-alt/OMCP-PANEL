@@ -18,7 +18,7 @@ SESSIONS={}
 SESSION_LOCK=threading.RLock()
 SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
-TUNNELS={}; TUNNEL_LOCK=threading.RLock(); METRIC_PREV={}; MINEKUBE_STATE={}
+TUNNELS={}; TUNNEL_LOCK=threading.RLock(); SFTP_TUNNELS={}; METRIC_PREV={}; MINEKUBE_STATE={}
 
 def load_users():
     if not USERSFILE.exists(): return {}
