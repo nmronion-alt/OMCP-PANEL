@@ -251,11 +251,15 @@ def start_sftp_pinggy():
     tunnels=globals().setdefault("SFTP_TUNNELS",{})
     entry=tunnels.get("main")
     if entry and entry["proc"].poll() is None:
-        return {"status":"running" if entry.get("address") else "starting","host":entry.get("host"),"port":entry.get("port"),"address":entry.get("address"),"logs":"\n".join(entry.get("lines",[])[-20:])}
+        return {"status":"running" if entry.get("address") else "starting","host":entry.get("host"),"port":entry.get("port"),"address":entry.get("address"),"logs":"
+".join(entry.get("lines",[])[-20:])}
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed; rerun the OMCP installer.")
     askpass=ROOT/"pinggy-sftp-askpass.sh"
-    askpass.write_text("#!/bin/sh\nprintf '\n'\n")
+    askpass.write_text("#!/bin/sh
+printf '
+'
+")
     os.chmod(askpass,0o700)
     env=os.environ.copy()
     env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
@@ -276,12 +280,15 @@ def start_sftp_pinggy():
     deadline=time.time()+30
     while time.time()<deadline:
         if entry.get("address"):
-            return {"status":"running","host":entry["host"],"port":entry["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
+            return {"status":"running","host":entry["host"],"port":entry["port"],"address":entry["address"],"logs":"
+".join(entry["lines"][-20:])}
         if proc.poll() is not None:
             time.sleep(0.2)
-            raise ValueError("Pinggy SFTP tunnel exited. "+"\n".join(entry["lines"][-20:])[-1400:])
+            raise ValueError("Pinggy SFTP tunnel exited. "+"
+".join(entry["lines"][-20:])[-1400:])
         time.sleep(0.25)
-    return {"status":"starting","host":None,"port":None,"address":None,"logs":"\n".join(entry["lines"][-20:])}
+    return {"status":"starting","host":None,"port":None,"address":None,"logs":"
+".join(entry["lines"][-20:])}
 
 def sftp_info(sid):
     meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
@@ -378,7 +385,8 @@ def player_action(sid, action, name, uuid):
         except Exception: raise ValueError(filename+" is invalid JSON; repair it before changing player permissions")
     def save(filename,data):
         p=folder/filename; tmp=p.with_name(p.name+".tmp")
-        tmp.write_text(json.dumps(data,indent=2)+"\n",encoding="utf-8"); os.replace(tmp,p)
+        tmp.write_text(json.dumps(data,indent=2)+"
+",encoding="utf-8"); os.replace(tmp,p)
     if action in ("ban","unban"):
         items=load("banned-players.json")
         if action=="ban":
@@ -599,8 +607,10 @@ def create(d):
     sid=secrets.token_hex(4); folder=safe_dir(sid); folder.mkdir(mode=0o750)
     try:
         download_server_jar(software,ver,folder/'server.jar')
-        if software not in ('velocity','waterfall'): (folder/'eula.txt').write_text('eula=true\n')
-        if software not in ('velocity','waterfall'): (folder/'server.properties').write_text('server-port='+str(port)+'\n')
+        if software not in ('velocity','waterfall'): (folder/'eula.txt').write_text('eula=true
+')
+        if software not in ('velocity','waterfall'): (folder/'server.properties').write_text('server-port='+str(port)+'
+')
         (folder/'omcp.json').write_text(json.dumps({'name':name,'version':ver,'software':software,'memory':mem,'cpuLimit':cpu_limit,'port':port,'serverType':'proxy' if software in ('velocity','waterfall') else 'game'},indent=2))
         return next(s for s in servers() if s['id']==sid)
     except Exception:
@@ -764,7 +774,9 @@ def start(sid):
     fifo_fd=os.open(fifo_path,os.O_RDWR)
     try:
         with log_path.open("wb",buffering=0) as log:
-            log.write(("\n[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | CPU limit: "+(str(cpu_limit)+"%" if cpu_limit else "unlimited")+" | JAR: "+jar.name+"\n").encode())
+            log.write(("
+[OMCP] Starting with Java: "+java+" | RAM: "+str(memory)+" GB | CPU limit: "+(str(cpu_limit)+"%" if cpu_limit else "unlimited")+" | JAR: "+jar.name+"
+").encode())
             p=subprocess.Popen([java,f"-Xms{min(1,memory)}G",f"-Xmx{memory}G","-jar",str(jar),"nogui"],cwd=folder,stdin=fifo_fd,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             if cpu_limit:
                 try: subprocess.Popen(["cpulimit","--pid",str(p.pid),"--limit",str(cpu_limit),"--background"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
@@ -783,7 +795,8 @@ def start(sid):
 
 def send_console_command(sid, command):
     folder=safe_dir(sid)
-    payload=command.encode("utf-8")+b"\n"
+    payload=command.encode("utf-8")+b"
+"
     fifo=folder/"console.stdin"
     # Preferred path: the named FIFO created before the JVM starts.
     try:
@@ -899,13 +912,17 @@ def enable_minekube(sid, endpoint=""):
         raw=props.read_text(errors="replace") if props.exists() else ""
         if re.search(r"(?m)^enforce-secure-profile=",raw):
             raw=re.sub(r"(?m)^enforce-secure-profile=.*$","enforce-secure-profile=false",raw)
-        else: raw+="\nenforce-secure-profile=false\n"
+        else: raw+="
+enforce-secure-profile=false
+"
         props.write_text(raw)
     if endpoint:
         cfg=plugins/"connect"/"config.yml"; cfg.parent.mkdir(parents=True,exist_ok=True)
         existing=cfg.read_text(errors="replace") if cfg.exists() else ""
         if re.search(r"(?m)^endpoint:",existing): existing=re.sub(r"(?m)^endpoint:.*$", "endpoint: "+endpoint, existing)
-        else: existing=existing.rstrip()+"\nendpoint: "+endpoint+"\n"
+        else: existing=existing.rstrip()+"
+endpoint: "+endpoint+"
+"
         cfg.write_text(existing)
     MINEKUBE_STATE[sid]={"installed":True,"endpoint":endpoint,"version":release.get("tag_name","latest"),"installed_at":int(time.time())}
     return minekube_info(sid)
@@ -960,19 +977,25 @@ def start_tunnel(sid, provider):
         threading.Thread(target=collect_bore,daemon=True).start()
         deadline=time.time()+25
         while time.time()<deadline:
-            if entry.get("address"): return {"status":"running","provider":"bore","port":port,"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
+            if entry.get("address"): return {"status":"running","provider":"bore","port":port,"address":entry["address"],"logs":"
+".join(entry["lines"][-20:])}
             if proc.poll() is not None:
-                time.sleep(0.2); detail="\n".join(entry["lines"][-30:]) or "Bore exited without returning a port."
+                time.sleep(0.2); detail="
+".join(entry["lines"][-30:]) or "Bore exited without returning a port."
                 raise ValueError("Bore tunnel exited (code "+str(proc.returncode)+"). "+detail[-1600:])
             time.sleep(0.2)
-        return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"\n".join(entry["lines"][-20:])}
+        return {"status":"starting","provider":"bore","port":port,"address":entry.get("address"),"logs":"
+".join(entry["lines"][-20:])}
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed")
     with TUNNEL_LOCK:
         old=TUNNELS.get(sid)
         if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
         askpass=ROOT/"pinggy-askpass.sh"
-        askpass.write_text("#!/bin/sh\nprintf '\n'\n"); os.chmod(askpass,0o700)
+        askpass.write_text("#!/bin/sh
+printf '
+'
+"); os.chmod(askpass,0o700)
         env=os.environ.copy(); env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
         cmd=[ssh,"-T","-p","443","-o","ConnectTimeout=20","-o","ConnectionAttempts=2","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password","-o","PasswordAuthentication=yes","-o","KbdInteractiveAuthentication=no","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=20","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(meta["port"]),"tcp@free.pinggy.io"]
         proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
@@ -991,13 +1014,16 @@ def start_tunnel(sid, provider):
     deadline=time.time()+25
     while time.time()<deadline:
         if entry.get("address"):
-            return {"status":"running","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
+            return {"status":"running","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"
+".join(entry["lines"][-20:])}
         if proc.poll() is not None:
             time.sleep(0.2)
-            detail="\n".join(entry["lines"][-30:]) or "SSH exited without returning a tunnel address."
+            detail="
+".join(entry["lines"][-30:]) or "SSH exited without returning a tunnel address."
             raise ValueError("Pinggy tunnel process exited (code "+str(proc.returncode)+"). "+detail[-1800:])
         time.sleep(0.2)
-    return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
+    return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"
+".join(entry["lines"][-20:])}
 
 def tunnel_info(sid):
     with TUNNEL_LOCK:
@@ -1006,7 +1032,8 @@ def tunnel_info(sid):
             p=entry["proc"]; alive=p.poll() is None
             if alive:
                 status=("running" if entry["address"] else "starting")
-                return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"\n".join(entry["lines"][-30:])}
+                return {"status":status,"provider":entry["provider"],"address":entry["address"],"logs":"
+".join(entry["lines"][-30:])}
     if MINEKUBE_STATE.get(sid) or (safe_dir(sid)/"plugins"/"connect-spigot.jar").exists() or (safe_dir(sid)/"plugins"/"connect-velocity.jar").exists() or (safe_dir(sid)/"plugins"/"connect-bungee.jar").exists():
         return minekube_info(sid)
     if entry: return {"status":"stopped","provider":entry["provider"],"address":None,"logs":"Routing process has stopped."}
@@ -1392,7 +1419,8 @@ def write_server_properties(sid, changes):
         if spec[0]=="url" and value and not re.match(r"^https://",value): raise ValueError("Resource pack URL must use HTTPS")
         if spec[0]=="world" and (not re.fullmatch(r"[A-Za-z0-9 _.-]{1,64}",value) or value in (".","..")): raise ValueError("Invalid world name")
         if spec[0]=="text" and len(value)>500: raise ValueError("Prompt is too long")
-        if spec[0]=="motd" and (len(value)>256 or "\n" in value or "\r" in value): raise ValueError("MOTD must be a single line of at most 256 characters")
+        if spec[0]=="motd" and (len(value)>256 or "
+" in value or "\r" in value): raise ValueError("MOTD must be a single line of at most 256 characters")
         if spec[0]=="seed" and (len(value)>128 or not re.fullmatch(r"[A-Za-z0-9 _.-]*",value)): raise ValueError("World seed must be at most 128 letters, numbers, spaces, dots, _ or -")
         current[key]=value
     lines=[]
@@ -1404,7 +1432,9 @@ def write_server_properties(sid, changes):
                     lines.append(key+"="+current.pop(key)); continue
             lines.append(line)
     lines.extend(k+"="+v for k,v in current.items())
-    tmp=path.with_name(path.name+".tmp"); tmp.write_text("\n".join(lines)+"\n",encoding="utf-8"); os.replace(tmp,path)
+    tmp=path.with_name(path.name+".tmp"); tmp.write_text("
+".join(lines)+"
+",encoding="utf-8"); os.replace(tmp,path)
     return read_server_properties(sid)
 
 def list_worlds(sid):
@@ -1586,7 +1616,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urlparse(self.path).path
         if path=="/api/health": return send(self,200,{"ok":True,"name":"OMCP"})
-        if path=="/api/setup/status":\n            users=load_users(); legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)\n            return send(self,200,{"setupRequired":len(users)==0,"passwordSetupRequired":legacy is not None,"setupUsername":legacy,"accountCount":len(users)})
+        if path=="/api/setup/status":
+            users=load_users(); legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
+            return send(self,200,{"setupRequired":len(users)==0,"passwordSetupRequired":legacy is not None,"setupUsername":legacy,"accountCount":len(users)})
         if path=="/" or path=="/index.html":
             try: return send(self,200,WEB.read_bytes(),"text/html; charset=utf-8")
             except Exception: return send(self,404,{"error":"UI file missing"})
@@ -1735,7 +1767,7 @@ class Handler(BaseHTTPRequestHandler):
                 users=load_users()
                 if path=="/api/setup":
                     if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
-                    if not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+",email): raise ValueError("Enter a valid email address")
+                    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
                     if users:
                         legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
                         if not legacy: return send(self,409,{"error":"Admin account already exists"})
@@ -1769,8 +1801,13 @@ class Handler(BaseHTTPRequestHandler):
                 d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
                 if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
-                email=str(d.get("email","")).strip().lower()\n                if not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+",email): raise ValueError("Enter a valid email address")\n                users=load_users()
-                if any(u.casefold()==username.casefold() for u in users): return send(self,409,{"error":"Username already exists"})\n                if any(v.get("email","").casefold()==email for v in users.values()): return send(self,409,{"error":"Email address is already in use"})\n                username=username.lower()\n                users[username]={"password":password_hash(password),"email":email,"role":"user","created":int(time.time())}
+                email=str(d.get("email","")).strip().lower()
+                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
+                users=load_users()
+                if any(u.casefold()==username.casefold() for u in users): return send(self,409,{"error":"Username already exists"})
+                if any(v.get("email","").casefold()==email for v in users.values()): return send(self,409,{"error":"Email address is already in use"})
+                username=username.lower()
+                users[username]={"password":password_hash(password),"email":email,"role":"user","created":int(time.time())}
                 save_users(users)
                 return send(self,201,{"user":{"username":username,"role":"user"}})
             except Exception as e: return send(self,400,{"error":str(e)})
@@ -1875,7 +1912,9 @@ class Handler(BaseHTTPRequestHandler):
             if x:
                 folder=safe_dir(x.group(1)); meta=json.loads((folder/"omcp.json").read_text())
                 if str(meta.get("software","paper")).lower() in ("velocity","waterfall"): raise ValueError("This proxy software does not use the Minecraft server EULA file.")
-                (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).\neula=true\n",encoding="utf-8")
+                (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).
+eula=true
+",encoding="utf-8")
                 return send(self,200,{"accepted":True})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
@@ -1886,7 +1925,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif act=="command":
                     cmd=str(d.get("command",""))
                     if not server_running(sid): raise ValueError("Server stopped")
-                    if not cmd or len(cmd)>500 or "\n" in cmd or "\r" in cmd: raise ValueError("Invalid command")
+                    if not cmd or len(cmd)>500 or "
+" in cmd or "\r" in cmd: raise ValueError("Invalid command")
                     if not send_console_command(sid,cmd): raise ValueError("Console input is unavailable. Restart this server once to enable persistent console commands.")
                     result={"sent":True}
                 else:
