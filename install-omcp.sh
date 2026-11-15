@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 # OMCP installer for Ubuntu/Debian. Supports systemd VPS and no-systemd shells.
 REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
+# Pin the agent to the verified syntax-fix commit so stale CDN caches cannot serve the broken file.
+AGENT_URL="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/872d833624f45cf9b09bcee0169dc0d01bf96a34/agent/omcp_agent.py"
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
@@ -20,7 +22,7 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
 id omcp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --create-home --shell /usr/sbin/nologin omcp
 install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
-curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py.new"
+curl -fSL --retry 3 "$AGENT_URL" -o "$APP/omcp_agent.py.new"
 curl -fsSL "$REPO/index.html" -o "$APP/index.html.new"
 # Publish only fully downloaded files.
 mv "$APP/omcp_agent.py.new" "$APP/omcp_agent.py"

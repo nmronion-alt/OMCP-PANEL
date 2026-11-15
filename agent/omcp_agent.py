@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io, sqlite3
+from contextlib import contextmanager
 try:
     import paramiko
 except ImportError:
@@ -14,19 +15,66 @@ WEB=Path(os.environ.get("OMCP_WEB","/opt/omcp/index.html"))
 HOST=os.environ.get("OMCP_HOST","127.0.0.1"); PORT=int(os.environ.get("OMCP_PORT","8765"))
 ROOT.mkdir(parents=True,exist_ok=True); SERVERS.mkdir(parents=True,exist_ok=True)
 USERSFILE=ROOT/"users.json"
+DBFILE=ROOT/"omcp.db"
 SESSIONS={}
 SESSION_LOCK=threading.RLock()
 SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
 TUNNELS={}; TUNNEL_LOCK=threading.RLock(); SFTP_TUNNELS={}; METRIC_PREV={}; MINEKUBE_STATE={}
 
-def load_users():
-    if not USERSFILE.exists(): return {}
+@contextmanager
+def db_connect():
+    db=sqlite3.connect(str(DBFILE),timeout=20)
+    db.row_factory=sqlite3.Row
+    db.execute("PRAGMA foreign_keys=ON")
     try:
-        data=json.loads(USERSFILE.read_text())
-        return data if isinstance(data,dict) else {}
+        yield db
+        db.commit()
     except Exception:
-        raise RuntimeError("users.json is invalid; restore it from backup before continuing")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+def init_database():
+    with db_connect() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY COLLATE NOCASE,
+            email TEXT UNIQUE COLLATE NOCASE,
+            role TEXT NOT NULL DEFAULT 'user',
+            password_json TEXT,
+            created INTEGER NOT NULL,
+            passwordless_admin INTEGER NOT NULL DEFAULT 0
+        )""")
+        # One-time, non-destructive migration from the legacy users.json file.
+        if USERSFILE.exists():
+            try:
+                legacy=json.loads(USERSFILE.read_text(encoding="utf-8"))
+                if isinstance(legacy,dict):
+                    for username,record in legacy.items():
+                        if not isinstance(record,dict): continue
+                        password=record.get("password")
+                        db.execute(
+                            "INSERT OR IGNORE INTO users(username,email,role,password_json,created,passwordless_admin) VALUES(?,?,?,?,?,?)",
+                            (str(username),record.get("email") or None,record.get("role","user"),
+                             json.dumps(password) if password else None,int(record.get("created",time.time())),
+                             1 if record.get("passwordless_admin") and not password else 0)
+                        )
+            except Exception as e:
+                raise RuntimeError("Legacy users.json migration failed: "+str(e))
+        db.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
+
+def load_users():
+    with db_connect() as db:
+        rows=db.execute("SELECT username,email,role,password_json,created,passwordless_admin FROM users").fetchall()
+    users={}
+    for row in rows:
+        record={"role":row["role"],"created":row["created"]}
+        if row["email"]: record["email"]=row["email"]
+        if row["password_json"]: record["password"]=json.loads(row["password_json"])
+        if row["passwordless_admin"]: record["passwordless_admin"]=True
+        users[row["username"]]=record
+    return users
 
 def atomic_json(path, data):
     path=Path(path)
@@ -35,10 +83,23 @@ def atomic_json(path, data):
     os.replace(tmp,path)
 
 def save_users(users):
-    tmp=USERSFILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(users,indent=2))
-    os.chmod(tmp,0o600)
-    tmp.replace(USERSFILE)
+    with db_connect() as db:
+        existing={row["username"].casefold() for row in db.execute("SELECT username FROM users")}
+        incoming={str(name).casefold() for name in users}
+        for name in existing-incoming:
+            db.execute("DELETE FROM users WHERE username=?",(name,))
+        for username,record in users.items():
+            password=record.get("password")
+            db.execute("""INSERT INTO users(username,email,role,password_json,created,passwordless_admin)
+                VALUES(?,?,?,?,?,?)
+                ON CONFLICT(username) DO UPDATE SET email=excluded.email,role=excluded.role,
+                password_json=excluded.password_json,created=excluded.created,
+                passwordless_admin=excluded.passwordless_admin""",
+                (str(username),record.get("email") or None,record.get("role","user"),
+                 json.dumps(password) if password else None,int(record.get("created",time.time())),
+                 1 if record.get("passwordless_admin") and not password else 0))
+
+init_database()
 
 def password_hash(password, salt=None):
     salt=salt or secrets.token_bytes(16)
@@ -203,7 +264,7 @@ def start_sftp_pinggy():
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed; rerun the OMCP installer.")
     askpass=ROOT/"pinggy-sftp-askpass.sh"
-    askpass.write_text("#!/bin/sh\nprintf '\\n'\n")
+    askpass.write_text("#!/bin/sh\nprintf '\n'\n")
     os.chmod(askpass,0o700)
     env=os.environ.copy()
     env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
@@ -227,7 +288,7 @@ def start_sftp_pinggy():
             return {"status":"running","host":entry["host"],"port":entry["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
         if proc.poll() is not None:
             time.sleep(0.2)
-            raise ValueError("Pinggy SFTP tunnel exited. "+"\\n".join(entry["lines"][-20:])[-1400:])
+            raise ValueError("Pinggy SFTP tunnel exited. "+"\n".join(entry["lines"][-20:])[-1400:])
         time.sleep(0.25)
     return {"status":"starting","host":None,"port":None,"address":None,"logs":"\n".join(entry["lines"][-20:])}
 
@@ -920,7 +981,7 @@ def start_tunnel(sid, provider):
         old=TUNNELS.get(sid)
         if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
         askpass=ROOT/"pinggy-askpass.sh"
-        askpass.write_text("#!/bin/sh\nprintf '\\n'\n"); os.chmod(askpass,0o700)
+        askpass.write_text("#!/bin/sh\nprintf '\n'\n"); os.chmod(askpass,0o700)
         env=os.environ.copy(); env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
         cmd=[ssh,"-T","-p","443","-o","ConnectTimeout=20","-o","ConnectionAttempts=2","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password","-o","PasswordAuthentication=yes","-o","KbdInteractiveAuthentication=no","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=20","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(meta["port"]),"tcp@free.pinggy.io"]
         proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
@@ -1534,7 +1595,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urlparse(self.path).path
         if path=="/api/health": return send(self,200,{"ok":True,"name":"OMCP"})
-        if path=="/api/setup/status": return send(self,200,{"setupRequired":len(load_users())==0,"accountCount":len(load_users())})
+        if path=="/api/setup/status":
+            users=load_users(); legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
+            return send(self,200,{"setupRequired":len(users)==0,"passwordSetupRequired":legacy is not None,"setupUsername":legacy,"accountCount":len(users)})
         if path=="/" or path=="/index.html":
             try: return send(self,200,WEB.read_bytes(),"text/html; charset=utf-8")
             except Exception: return send(self,404,{"error":"UI file missing"})
@@ -1542,11 +1605,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path=="/api/users":
                 if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
-                return send(self,200,{"users":[{"username":u,"role":v.get("role","user")} for u,v in load_users().items()]})
+                return send(self,200,{"users":[{"username":u,"email":v.get("email",""),"role":v.get("role","user")} for u,v in load_users().items()]})
             if path=="/api/me":
                 u=load_users().get(self.username)
                 if not u: return send(self,401,{"error":"Account no longer exists"})
-                return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
+                return send(self,200,{"user":{"username":self.username,"email":u.get("email",""),"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/mods/search",path)
             if x:
@@ -1679,21 +1742,31 @@ class Handler(BaseHTTPRequestHandler):
         path=urlparse(self.path).path
         if path in ("/api/setup","/api/login"):
             try:
-                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
+                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password","")); email=str(d.get("email","")).strip().lower()
                 users=load_users()
                 if path=="/api/setup":
-                    if users: return send(self,409,{"error":"Admin account already exists"})
-                    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
-                    users[username]={"role":"admin","created":int(time.time()),"passwordless_admin":True}
+                    if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
+                    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
+                    if users:
+                        legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
+                        if not legacy: return send(self,409,{"error":"Admin account already exists"})
+                        if username and username.casefold()!=legacy.casefold(): return send(self,400,{"error":"Use the existing admin username to secure this account"})
+                        username=legacy
+                        users[username].pop("passwordless_admin",None)
+                    else:
+                        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
+                        username=username.lower()
+                    if any(u.casefold()!=username.casefold() and r.get("email","").casefold()==email for u,r in users.items()): return send(self,409,{"error":"Email address is already in use"})
+                    users[username]={"role":"admin","created":int(time.time()),"email":email,"password":password_hash(password)}
                     save_users(users)
                 else:
-                    canonical=next((u for u in users if u.strip().casefold()==username.strip().casefold()),None)
+                    canonical=next((u for u,r in users.items() if u.strip().casefold()==username.casefold() or r.get("email","").casefold()==username.casefold()),None)
                     record=users.get(canonical) if canonical else None
-                    if not record: return send(self,401,{"error":"Unknown username. Check that this is the same VPS/data folder where your admin account was created."})
-                    if record.get("role")!="admin" and not password_ok(password,record):
-                        return send(self,401,{"error":"Incorrect username or password."})
+                    if not record: return send(self,401,{"error":"Incorrect username/email or password."})
+                    if not record.get("password") or not password_ok(password,record):
+                        return send(self,401,{"error":"Incorrect username/email or password."})
                     username=canonical
-                return send(self,200,{"token":new_session(username),"user":{"username":username,"role":users[username]["role"]}})
+                return send(self,200,{"token":new_session(username),"user":{"username":username,"email":users[username].get("email",""),"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
         if path=="/api/logout":
             header=self.headers.get("Authorization","")
@@ -1707,10 +1780,13 @@ class Handler(BaseHTTPRequestHandler):
                 d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
                 if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
+                email=str(d.get("email","")).strip().lower()
+                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
                 users=load_users()
                 if any(u.casefold()==username.casefold() for u in users): return send(self,409,{"error":"Username already exists"})
+                if any(v.get("email","").casefold()==email for v in users.values()): return send(self,409,{"error":"Email address is already in use"})
                 username=username.lower()
-                users[username]={"password":password_hash(password),"role":"user","created":int(time.time())}
+                users[username]={"password":password_hash(password),"email":email,"role":"user","created":int(time.time())}
                 save_users(users)
                 return send(self,201,{"user":{"username":username,"role":"user"}})
             except Exception as e: return send(self,400,{"error":str(e)})
