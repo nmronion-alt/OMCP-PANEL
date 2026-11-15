@@ -255,7 +255,7 @@ def start_sftp_pinggy():
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed; rerun the OMCP installer.")
     askpass=ROOT/"pinggy-sftp-askpass.sh"
-    askpass.write_text("#!/bin/sh\nprintf '\\n'\n")
+    askpass.write_text("#!/bin/sh\nprintf '\n'\n")
     os.chmod(askpass,0o700)
     env=os.environ.copy()
     env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
@@ -279,7 +279,7 @@ def start_sftp_pinggy():
             return {"status":"running","host":entry["host"],"port":entry["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
         if proc.poll() is not None:
             time.sleep(0.2)
-            raise ValueError("Pinggy SFTP tunnel exited. "+"\\n".join(entry["lines"][-20:])[-1400:])
+            raise ValueError("Pinggy SFTP tunnel exited. "+"\n".join(entry["lines"][-20:])[-1400:])
         time.sleep(0.25)
     return {"status":"starting","host":None,"port":None,"address":None,"logs":"\n".join(entry["lines"][-20:])}
 
@@ -972,7 +972,7 @@ def start_tunnel(sid, provider):
         old=TUNNELS.get(sid)
         if old and old["proc"].poll() is None: raise ValueError("A tunnel is already running for this server")
         askpass=ROOT/"pinggy-askpass.sh"
-        askpass.write_text("#!/bin/sh\nprintf '\\n'\n"); os.chmod(askpass,0o700)
+        askpass.write_text("#!/bin/sh\nprintf '\n'\n"); os.chmod(askpass,0o700)
         env=os.environ.copy(); env["SSH_ASKPASS"]=str(askpass); env["SSH_ASKPASS_REQUIRE"]="force"; env["DISPLAY"]=env.get("DISPLAY","omcp:0")
         cmd=[ssh,"-T","-p","443","-o","ConnectTimeout=20","-o","ConnectionAttempts=2","-o","RequestTTY=no","-o","BatchMode=no","-o","NumberOfPasswordPrompts=1","-o","PreferredAuthentications=password","-o","PasswordAuthentication=yes","-o","KbdInteractiveAuthentication=no","-o","PubkeyAuthentication=no","-o","StrictHostKeyChecking=accept-new","-o","ServerAliveInterval=20","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-R0:127.0.0.1:"+str(meta["port"]),"tcp@free.pinggy.io"]
         proc=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True,env=env)
