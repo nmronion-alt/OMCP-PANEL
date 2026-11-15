@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io, sqlite3
+from contextlib import contextmanager
 try:
     import paramiko
 except ImportError:
@@ -21,11 +22,19 @@ SESSION_TTL=12*60*60
 PROCS={}; LOCK=threading.RLock()
 TUNNELS={}; TUNNEL_LOCK=threading.RLock(); SFTP_TUNNELS={}; METRIC_PREV={}; MINEKUBE_STATE={}
 
+@contextmanager
 def db_connect():
     db=sqlite3.connect(str(DBFILE),timeout=20)
     db.row_factory=sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
-    return db
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 def init_database():
     with db_connect() as db:
