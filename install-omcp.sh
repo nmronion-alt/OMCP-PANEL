@@ -39,11 +39,18 @@ cat >"$APP/run-tunnel.sh" <<'TUNNEL'
 #!/usr/bin/env bash
 set +e
 while true; do
-  /usr/bin/ssh -i /var/lib/omcp/.ssh/id_ed25519 \
-    -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+  /usr/bin/ssh -n -T -i /var/lib/omcp/.ssh/id_ed25519 \
+    -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-    -o ExitOnForwardFailure=yes -t -R 80:localhost:8765 \
-    stable@proxy.tunnl.gg 2>&1 | /usr/bin/tee -a /var/lib/omcp/tunnl.log
+    -o ExitOnForwardFailure=yes -R 80:localhost:8765 \
+    stable@proxy.tunnl.gg output=json 2>&1 | /usr/bin/tee -a /var/lib/omcp/tunnl.log | while IFS= read -r line; do
+      url="$(printf '%s' "$line" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("url","") if d.get("event")=="tunnel" else "")' 2>/dev/null || true)"
+      if [[ "$url" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then
+        printf '%s\n' "$url" >/var/lib/omcp/panel-url.tmp
+        chmod 0640 /var/lib/omcp/panel-url.tmp
+        mv /var/lib/omcp/panel-url.tmp /var/lib/omcp/panel-url
+      fi
+    done
   sleep 5
 done
 TUNNEL
@@ -71,6 +78,7 @@ configure_first_admin() {
   unset password confirm payload response
 }
 
+rm -f "$DATA/panel-url.tmp" "$DATA/panel-url"
 SYSTEMD_STATE=""
 SYSTEMD_OK=0
 if command -v systemctl >/dev/null 2>&1; then
@@ -178,3 +186,30 @@ echo "OpenJDK 21 was installed. Verify with: java -version"
 echo "Cloud Shell sessions are temporary; processes and files may be lost when the session ends."
 echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL." 
 echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."
+
+echo
+echo "Waiting for the OMCP HTTPS URL (up to 90 seconds)..."
+PANEL_URL=""
+for _ in {1..90}; do
+  if [[ -s "$DATA/panel-url" ]]; then
+    PANEL_URL="$(tr -d '\r\n' <"$DATA/panel-url")"
+    if [[ "$PANEL_URL" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then break; fi
+    PANEL_URL=""
+  fi
+  sleep 1
+done
+if [[ -n "$PANEL_URL" ]]; then
+  echo "=================================================="
+  echo "OMCP PANEL URL: $PANEL_URL"
+  echo "=================================================="
+else
+  echo "Tunnel is not connected yet. The panel may still be running locally."
+  echo "Check: sudo tail -n 80 /var/lib/omcp/tunnl.log"
+  echo "Check API: curl -sS http://127.0.0.1:8765/api/health"
+  if [[ -f /etc/systemd/system/omcp-tunnel.service ]]; then
+    echo "Tunnel service: sudo systemctl status omcp-tunnel --no-pager"
+  else
+    echo "Tunnel process: sudo ps -ef | grep '[s]sh.*proxy.tunnl.gg'"
+  fi
+fi
+
