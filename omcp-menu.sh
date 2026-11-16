@@ -2,27 +2,53 @@
 set -Eeuo pipefail
 PURPLE='\033[1;35m'
 CYAN='\033[1;36m'
+BLUE='\033[1;34m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+RED='\033[1;31m'
+WHITE='\033[1;37m'
+DIM='\033[2m'
+BOLD='\033[1m'
 RESET='\033[0m'
+LINE='──────────────────────────────────────────────────────────────────────────────'
 REPO='https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main'
 TMP='/tmp/omcp-menu'
 if [[ "$EUID" -ne 0 ]]; then echo "Run this menu with sudo: sudo bash omcp-menu.sh"; exit 1; fi
 mkdir -p "$TMP"
 clear 2>/dev/null || true
+system_stats() {
+  local cpu ram disk load net
+  cpu="$(top -bn1 2>/dev/null | awk '/Cpu\(s\)/ {for(i=1;i<=NF;i++) if($i=="id,"){gsub(/,/, "", $(i-1)); printf "%d", 100-$(i-1); exit} if($i=="id"){printf "%d",100-$(i-1); exit}}' || true)"
+  [[ -n "$cpu" ]] || cpu="N/A"
+  ram="$(free -m 2>/dev/null | awk '/^Mem:/ {if($2>0) printf "%d%%",($3/$2)*100; else print "N/A"}' || true)"
+  [[ -n "$ram" ]] || ram="N/A"
+  disk="$(df -hP / 2>/dev/null | awk 'NR==2 {print $5}' || true)"
+  [[ -n "$disk" ]] || disk="N/A"
+  load="$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo N/A)"
+  if ip route 2>/dev/null | grep -q '^default'; then net="${GREEN}● ONLINE${RESET}"; else net="${RED}● OFFLINE${RESET}"; fi
+  printf "  ${BOLD}${CYAN}◉ SYSTEM STATUS${RESET}\n"
+  printf "  ${WHITE}CPU:${RESET} %s%%   ${WHITE}RAM:${RESET} %s   ${WHITE}DISK:${RESET} %s   ${WHITE}LOAD:${RESET} %s   ${WHITE}NETWORK:${RESET} %b\n" "$cpu" "$ram" "$disk" "$load" "$net"
+}
 banner() {
   clear 2>/dev/null || true
-  echo -e "${PURPLE}"
+  printf "\n${PURPLE}${BOLD}"
   cat <<'ART'
-   ____  __  __ ____ ____  ___
-  / __ \\/\\ \\/ // ___/  _/ / _ \\
- / /_/ / \\ V / / /   / /  / ___/
-/_____/   \\_/ /_/   /___/ /_/
-          INSTALLER
+   ██████╗ ███╗   ███╗ ██████╗██████╗
+  ██╔═══██╗████╗ ████║██╔════╝██╔══██╗
+  ██║   ██║██╔████╔██║██║     ██████╔╝
+  ██║   ██║██║╚██╔╝██║██║     ██╔═══╝
+  ╚██████╔╝██║ ╚═╝ ██║╚██████╗██║
+   ╚═════╝ ╚═╝     ╚═╝ ╚═════╝╚═╝
 ART
-  echo -e "${RESET}"
-  echo "             O M C P   I N S T A L L E R"
-  echo
+  printf "${RESET}"
+  printf "  ${BOLD}${WHITE}ONION MINECRAFT CONTROL PANEL${RESET}  ${PURPLE}◆ INSTALLER EDITION${RESET}\n"
+  printf "  ${DIM}%s${RESET}\n" "$LINE"
+  system_stats
+  printf "  ${DIM}%s${RESET}\n\n" "$LINE"
 }
-pause(){ echo; read -r -p "Press Enter to return to menu..." _; }
+section() { printf "\n  ${BOLD}${CYAN}◆ %s${RESET}\n" "$1"; }
+option() { printf "  ${BOLD}${YELLOW}[%s]${RESET} ${WHITE}%s${RESET}\n" "$1" "$2"; }
+pause(){ echo; read -r -p "$(printf '\033[1;36m  Press Enter to continue...\033[0m ')" _; }
 fetch_script(){
   local file="$1" out="$TMP/$1"
   curl -fL --retry 3 --retry-all-errors "$REPO/$file" -o "$out"
@@ -32,7 +58,12 @@ fetch_script(){
 user_manager(){
   if ! id omcp >/dev/null 2>&1; then echo "Install OMCP first, then manage panel users."; return; fi
   python3 - <<'PY'
-import os, json, re, time, base64, hashlib, secrets, getpass, pathlib, pwd, grp
+import os, sys, json, re, time, base64, hashlib, secrets, getpass, pathlib, pwd, grp
+# Python source is supplied by heredoc; interactive answers must come from the actual terminal.
+try:
+    sys.stdin = open("/dev/tty", "r")
+except OSError:
+    raise SystemExit("ERROR: User management requires an interactive terminal (/dev/tty).")
 p=pathlib.Path("/var/lib/omcp/users.json")
 p.parent.mkdir(parents=True,exist_ok=True)
 def load():
@@ -54,9 +85,12 @@ def pw():
     salt=secrets.token_bytes(16)
     return {"salt":base64.b64encode(salt).decode(),"hash":base64.b64encode(hashlib.pbkdf2_hmac("sha256",a.encode(),salt,310000)).decode(),"iterations":310000}
 while True:
-    print("\n===== OMCP USER MANAGEMENT =====")
-    print("1) New User\n2) Manage User (role)\n3) Delete User\n4) List Users\n0) Back")
-    choice=input("Select: ").strip()
+    print("\n\033[1;35m╭────────────── OMCP USER MANAGEMENT ──────────────╮\033[0m")
+    print("\033[1;36m  [1]\033[0m New User       \033[1;36m[2]\033[0m Manage User (Role)")
+    print("\033[1;36m  [3]\033[0m Delete User    \033[1;36m[4]\033[0m List Users")
+    print("\033[1;33m  [0]\033[0m Back")
+    print("\033[1;35m╰─────────────────────────────────────────────────╯\033[0m")
+    choice=input("\033[1;32m  ➜ Select option: \033[0m").strip()
     if choice=="0": break
     users=load()
     try:
@@ -114,12 +148,13 @@ PY
 }
 tunnel_menu(){
   while true; do
-    echo; echo "===== NON-IPv4 TUNNEL ====="
-    echo "1) Restart panel tunnel"
-    echo "2) Show panel URL"
-    echo "3) Show tunnel status/log"
-    echo "0) Back"
-    read -r -p "Select: " x
+    section "NON-IPv4 TUNNEL MANAGEMENT"
+    option 1 "Restart panel tunnel"
+    option 2 "Show panel URL"
+    option 3 "Show tunnel status / log"
+    option 0 "Back"
+    printf "\n  ${BOLD}${GREEN}➜ Enter option:${RESET} "
+    read -r x
     case "$x" in
       1) if systemctl list-unit-files 2>/dev/null | grep -q '^omcp-tunnel.service'; then systemctl restart omcp-tunnel; else echo "No systemd tunnel service found."; fi ;;
       2) cat /var/lib/omcp/panel-url 2>/dev/null || echo "No public URL saved yet." ;;
@@ -215,14 +250,15 @@ mode_menu(){
   local mode="$1" label="$2" choice
   while true; do
     banner
-    echo "MODE: $label"
-    echo
-    echo "1) Install"
-    echo "2) Uninstall"
-    echo "3) User Management"
-    if [[ "$mode" == "ipv4" ]]; then echo "4) Minecraft IP / Domain"; else echo "4) Tunnel Management"; fi
-    echo "0) Back"
-    read -r -p "Select an option: " choice
+    printf "  ${BOLD}${PURPLE}MODE:${RESET} ${BOLD}${GREEN}%s${RESET}\n" "$label"
+    section "DEPLOYMENT & SERVICES"
+    option 1 "Install OMCP"
+    option 2 "Uninstall OMCP"
+    option 3 "User Management"
+    if [[ "$mode" == "ipv4" ]]; then option 4 "Minecraft IP / Domain"; else option 4 "Tunnel Management"; fi
+    option 0 "Back"
+    printf "\n  ${BOLD}${GREEN}➜ Enter option:${RESET} "
+    read -r choice
     case "$choice" in
       1) run_install "$mode"; pause ;;
       2) run_uninstall; pause ;;
@@ -235,12 +271,12 @@ mode_menu(){
 }
 while true; do
   banner
-  echo "Choose your network mode:"
-  echo
-  echo "1) IPv4 Mode       (Direct IP / Domain, no tunnel)"
-  echo "2) Non-IPv4 Mode   (tunnl.gg reverse tunnel)"
-  echo "0) Exit"
-  read -r -p "Select an option: " choice
+  section "NETWORK / DEPLOYMENT MODE"
+  option 1 "IPv4 Mode       — Direct IP / Domain"
+  option 2 "Non-IPv4 Mode   — tunnl.gg Reverse Tunnel"
+  option 0 "Exit Installer"
+  printf "\n  ${BOLD}${GREEN}➜ Enter option:${RESET} "
+  read -r choice
   case "$choice" in
     1) mode_menu ipv4 "IPv4" ;;
     2) mode_menu nonipv4 "Non-IPv4" ;;
