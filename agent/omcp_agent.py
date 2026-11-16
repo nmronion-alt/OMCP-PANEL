@@ -260,8 +260,7 @@ def start_sftp_pinggy():
     tunnels=globals().setdefault("SFTP_TUNNELS",{})
     entry=tunnels.get("main")
     if entry and entry["proc"].poll() is None:
-        return {"status":"running" if entry.get("address") else "starting","host":entry.get("host"),"port":entry.get("port"),"address":entry.get("address"),"logs":"
-".join(entry.get("lines",[])[-20:])}
+        return {"status":"running" if entry.get("address") else "starting","host":entry.get("host"),"port":entry.get("port"),"address":entry.get("address"),"logs":"\n".join(entry.get("lines",[])[-20:])}
     ssh=shutil.which("ssh")
     if not ssh: raise ValueError("OpenSSH client is not installed; rerun the OMCP installer.")
     askpass=ROOT/"pinggy-sftp-askpass.sh"
