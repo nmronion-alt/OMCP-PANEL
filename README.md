@@ -27,39 +27,6 @@ curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronio
 
 The installer reads tunnl.gg's machine-readable JSON tunnel event and saves the public URL to `/var/lib/omcp/panel-url`. It waits up to 90 seconds and prints **OMCP PANEL URL** when the tunnel connects. It no longer guesses the URL by grepping the human-readable tunnel log.
 
-### Update an existing installation
-
-Run the same installer command again. It updates OMCP while preserving `/var/lib/omcp`, including users, server files, worlds, backups and the stable tunnel SSH identity.
-
-### Uninstall OMCP
-
-Remove the OMCP application and service definitions while keeping server files and backups:
-
-```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo bash /tmp/omcp-uninstall.sh
-```
-
-The uninstaller asks you to type `REMOVE-OMCP`. By default it preserves `/var/lib/omcp`. To also permanently delete server files, worlds, backups, users and configuration:
-
-```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo OMCP_PURGE_DATA=1 bash /tmp/omcp-uninstall.sh
-```
-
-**Warning:** The purge option permanently deletes OMCP data. Download any backups you need first.
-
-### If the URL is not printed
-
-```bash
-curl -sS http://127.0.0.1:8765/api/health
-sudo tail -n 80 /var/lib/omcp/tunnl.log
-sudo cat /var/lib/omcp/panel-url 2>/dev/null || true
-sudo systemctl status omcp omcp-tunnel --no-pager
-```
-
-On hosts without systemd, inspect processes with `sudo ps -ef | grep -E '[o]mcp_agent.py|[r]un-tunnel.sh'`.
-
-> **Note:** This installer targets Ubuntu/Debian systems. Use a persistent VPS for a panel that should stay online. Temporary cloud-shell sessions can stop or lose their files when the session ends.
-
 ## ✨ What is OMCP?
 
 OMCP is a self-hosted control panel for managing Minecraft Java servers on your own Linux host. It includes a web dashboard and a local agent that controls the Minecraft server process and its files.
