@@ -53,7 +53,7 @@ chown root:omcp "$APP/run-tunnel.sh"
 # Ask for the first administrator during an interactive install. Existing accounts are never overwritten.
 configure_first_admin() {
   local status required existing username email password confirm payload response
-  status="$(curl -fsS --max-time 5 http://127.0.0.1:8765/api/setup/status 2>/dev/null || true)"
+  status=""; for _ in {1..20}; do status="$(curl -fsS --max-time 5 http://127.0.0.1:8765/api/setup/status 2>/dev/null || true)"; [[ -n "$status" ]] && break; sleep 1; done
   required="$(printf '%s' "$status" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("setupRequired") else "no")' 2>/dev/null || echo no)"
   if [[ "$required" != "yes" ]]; then echo "Existing administrator account detected; keeping current credentials."; return 0; fi
   if [[ ! -r /dev/tty ]]; then echo "No interactive terminal detected. Complete first-admin setup from the OMCP setup page."; return 0; fi
