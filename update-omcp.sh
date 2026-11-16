@@ -57,6 +57,17 @@ rollback(){
     tar -xzf "$BACKUP/omcp-app-before-update.tar.gz" -C /opt
     if command -v systemctl >/dev/null 2>&1 && systemctl cat omcp.service >/dev/null 2>&1; then
       systemctl restart omcp.service || true
+    else
+      PIDFILE="$DATA/agent.pid"
+      if [[ -f "$PIDFILE" ]]; then
+        PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+        if [[ "$PID" =~ ^[0-9]+$ ]] && kill -0 "$PID" 2>/dev/null; then
+          CMD="$(tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null || true)"
+          [[ "$CMD" == *"/opt/omcp/omcp_agent.py"* ]] && kill "$PID" || true
+        fi
+        rm -f "$PIDFILE"
+      fi
+      runuser -u omcp -- sh -c 'nohup env OMCP_HOST=127.0.0.1 OMCP_PORT=8765 OMCP_DATA=/var/lib/omcp OMCP_WEB=/opt/omcp/index.html /usr/bin/python3 /opt/omcp/omcp_agent.py </dev/null >>/var/lib/omcp/agent.log 2>&1 & echo $! >/var/lib/omcp/agent.pid' || true
     fi
   fi
 }
@@ -70,6 +81,7 @@ on_error(){
 trap on_error ERR
 
 say "Installing panel files (Minecraft data is not touched)..."
+UPDATED=1
 install -d -o root -g omcp -m 0750 "$APP/admin"
 install -o root -g omcp -m 0640 "$WORK/omcp_agent.py" "$APP/omcp_agent.py.new"
 install -o root -g omcp -m 0640 "$WORK/index.html" "$APP/index.html.new"
@@ -83,7 +95,6 @@ for asset in index.html admin.css admin.js admin.ts; do
 done
 chown root:omcp "$APP/omcp_agent.py" "$APP/index.html" "$APP/admin/"*
 chmod 0640 "$APP/omcp_agent.py" "$APP/index.html" "$APP/admin/"*
-UPDATED=1
 
 say "Restarting OMCP agent..."
 if command -v systemctl >/dev/null 2>&1 && systemctl cat omcp.service >/dev/null 2>&1; then
@@ -123,7 +134,8 @@ if [[ "$HEALTHY" -ne 1 ]]; then
   else
     tail -n 60 "$DATA/agent.log" 2>/dev/null || true
   fi
-  fail "New version did not pass the local health check. The previous app backup is at $BACKUP"
+  echo "[OMCP UPDATE] ERROR: New version did not pass the local health check. Backup: $BACKUP" >&2
+  false
 fi
 
 trap - ERR
