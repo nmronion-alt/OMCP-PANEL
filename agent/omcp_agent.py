@@ -456,6 +456,10 @@ def install_modrinth(sid, project_id, version_id, kind="mod"):
 def password_ok(password, record):
     import base64, hashlib
     try:
+        # Panel users store the hash under "password"; SFTP stores the
+        # same hash fields directly. Accept both record shapes.
+        if isinstance(record.get("password"),dict):
+            record=record["password"]
         salt=base64.b64decode(record["salt"])
         expected=base64.b64decode(record["hash"])
         actual=hashlib.pbkdf2_hmac("sha256",password.encode(),salt,int(record["iterations"]))
