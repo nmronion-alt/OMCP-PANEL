@@ -50,6 +50,27 @@ TUNNEL
 chmod 0750 "$APP/run-tunnel.sh"
 chown root:omcp "$APP/run-tunnel.sh"
 
+# Ask for the first administrator during an interactive install. Existing accounts are never overwritten.
+configure_first_admin() {
+  local status required existing username email password confirm payload response
+  status="$(curl -fsS --max-time 5 http://127.0.0.1:8765/api/setup/status 2>/dev/null || true)"
+  required="$(printf '%s' "$status" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("setupRequired") else "no")' 2>/dev/null || echo no)"
+  if [[ "$required" != "yes" ]]; then echo "Existing administrator account detected; keeping current credentials."; return 0; fi
+  if [[ ! -r /dev/tty ]]; then echo "No interactive terminal detected. Complete first-admin setup from the OMCP setup page."; return 0; fi
+  existing="$(printf '%s' "$status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("setupUsername") or "")' 2>/dev/null || true)"
+  echo
+  echo "===== OMCP FIRST ADMIN SETUP ====="
+  if [[ -n "$existing" ]]; then username="$existing"; echo "Securing existing legacy admin: $username"; else read -r -p "Admin username: " username </dev/tty; fi
+  read -r -p "Admin email: " email </dev/tty
+  read -r -s -p "Admin password (10-128 characters): " password </dev/tty; echo
+  read -r -s -p "Confirm admin password: " confirm </dev/tty; echo
+  if [[ "$password" != "$confirm" ]]; then echo "Passwords did not match. Complete setup from the OMCP setup page."; unset password confirm; return 1; fi
+  payload="$(OMCP_SETUP_USERNAME="$username" OMCP_SETUP_EMAIL="$email" OMCP_SETUP_PASSWORD="$password" python3 -c 'import json,os; print(json.dumps({"username":os.environ["OMCP_SETUP_USERNAME"],"email":os.environ["OMCP_SETUP_EMAIL"],"password":os.environ["OMCP_SETUP_PASSWORD"]}))')"
+  response="$(printf '%s' "$payload" | curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8765/api/setup 2>&1)" || { echo "Admin setup failed: $response"; unset password confirm payload; return 1; }
+  printf '%s' "$response" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Administrator created: "+d["user"]["username"] if d.get("user") else "Administrator setup completed")'
+  unset password confirm payload response
+}
+
 SYSTEMD_STATE=""
 SYSTEMD_OK=0
 if command -v systemctl >/dev/null 2>&1; then
@@ -91,6 +112,8 @@ UNIT
   systemctl daemon-reload
   systemctl enable omcp
   if systemctl is-active --quiet omcp; then systemctl restart omcp; else systemctl start omcp; fi
+  sleep 2
+  configure_first_admin
   cat >/etc/systemd/system/omcp-tunnel.service <<'TUNNEL'
 [Unit]
 Description=OMCP stable HTTPS tunnel via tunnl.gg
@@ -132,6 +155,7 @@ else
   sleep 2
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
     echo "OMCP background process started (PID $(cat "$DATA/agent.pid"))."
+    configure_first_admin
   else
     echo "OMCP did not start. Recent log:"
     tail -n 60 "$DATA/agent.log" 2>/dev/null || true
