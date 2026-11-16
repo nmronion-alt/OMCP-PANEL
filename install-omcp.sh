@@ -13,7 +13,8 @@ if [[ "$MODE" == "nonipv4" && -L /etc/nginx/sites-enabled/omcp ]]; then
   if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || true; fi
 fi
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless openssh-client
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless
+if [[ "$MODE" == "nonipv4" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-client; fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y cpulimit >/dev/null 2>&1 || true
 # Install Java 25 when the configured Ubuntu/Debian repositories provide it; Java 21 remains the baseline.
 if apt-cache show openjdk-25-jre-headless >/dev/null 2>&1; then
@@ -36,6 +37,7 @@ python3 -m py_compile "$APP/omcp_agent.py"
 chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
 chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
 
+if [[ "$MODE" == "nonipv4" ]]; then
 # Keep one SSH identity so tunnl.gg can return the same free stable URL after reconnects.
 install -d -o omcp -g omcp -m 0700 "$DATA/.ssh"
 if [[ ! -s "$DATA/.ssh/id_ed25519" ]]; then
@@ -62,6 +64,8 @@ done
 TUNNEL
 chmod 0750 "$APP/run-tunnel.sh"
 chown root:omcp "$APP/run-tunnel.sh"
+
+fi
 
 # Ask for the first administrator during an interactive install. Existing accounts are never overwritten.
 configure_first_admin() {
