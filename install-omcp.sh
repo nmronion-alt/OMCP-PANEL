@@ -168,7 +168,7 @@ TUNNEL
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
   echo "First-run Admin setup: sudo journalctl -u omcp -n 80 --no-pager"
-  echo "Tunnel URL/log: sudo tail -n 40 /var/lib/omcp/tunnl.log"
+  if [[ "$MODE" == "nonipv4" ]]; then echo "Tunnel URL/log: sudo tail -n 40 /var/lib/omcp/tunnl.log"; fi
 else
   echo "systemd is not usable (state: ${SYSTEMD_STATE:-unavailable}); using background-process mode."
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
@@ -207,7 +207,7 @@ if [[ "$MODE" == "nonipv4" ]]; then echo "Panel is bound to localhost. tunnl.gg 
 echo "OpenJDK 21 was installed. Verify with: java -version"
 echo "Cloud Shell sessions are temporary; processes and files may be lost when the session ends."
 if [[ "$MODE" == "nonipv4" ]]; then echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL."; fi 
-echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."
+if [[ "$MODE" == "nonipv4" ]]; then echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."; fi
 
 echo
 if [[ "$MODE" == "ipv4" ]]; then
