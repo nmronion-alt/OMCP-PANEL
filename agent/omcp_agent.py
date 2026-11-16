@@ -1717,7 +1717,7 @@ class Handler(BaseHTTPRequestHandler):
                 users=load_users(); record=users.get(old_username)
                 if not record or not record.get("password") or not password_ok(current_password,record): return send(self,401,{"error":"Enter your current password to confirm these changes"})
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
-                if not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+",email): raise ValueError("Enter a valid email address")
+                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
                 canonical=username.lower()
                 if any(u.casefold()==canonical.casefold() and u!=old_username for u in users): return send(self,409,{"error":"Username already exists"})
                 if any(u!=old_username and v.get("email","").casefold()==email for u,v in users.items()): return send(self,409,{"error":"Email address is already in use"})
