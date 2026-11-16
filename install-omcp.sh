@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 # OMCP installer for Ubuntu/Debian. Supports systemd VPS and no-systemd shells.
-REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
+REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation"
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
@@ -39,17 +39,46 @@ cat >"$APP/run-tunnel.sh" <<'TUNNEL'
 #!/usr/bin/env bash
 set +e
 while true; do
-  /usr/bin/ssh -i /var/lib/omcp/.ssh/id_ed25519 \
-    -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+  /usr/bin/ssh -n -T -i /var/lib/omcp/.ssh/id_ed25519 \
+    -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-    -o ExitOnForwardFailure=yes -t -R 80:localhost:8765 \
-    stable@proxy.tunnl.gg 2>&1 | /usr/bin/tee -a /var/lib/omcp/tunnl.log
+    -o ExitOnForwardFailure=yes -R 80:localhost:8765 \
+    stable@proxy.tunnl.gg output=json 2>&1 | /usr/bin/tee -a /var/lib/omcp/tunnl.log | while IFS= read -r line; do
+      url="$(printf '%s' "$line" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("url","") if d.get("event")=="tunnel" else "")' 2>/dev/null || true)"
+      if [[ "$url" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then
+        printf '%s\n' "$url" >/var/lib/omcp/panel-url.tmp
+        chmod 0640 /var/lib/omcp/panel-url.tmp
+        mv /var/lib/omcp/panel-url.tmp /var/lib/omcp/panel-url
+      fi
+    done
   sleep 5
 done
 TUNNEL
 chmod 0750 "$APP/run-tunnel.sh"
 chown root:omcp "$APP/run-tunnel.sh"
 
+# Ask for the first administrator during an interactive install. Existing accounts are never overwritten.
+configure_first_admin() {
+  local status required existing username email password confirm payload response
+  status=""; for _ in {1..20}; do status="$(curl -fsS --max-time 5 http://127.0.0.1:8765/api/setup/status 2>/dev/null || true)"; [[ -n "$status" ]] && break; sleep 1; done
+  required="$(printf '%s' "$status" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("setupRequired") else "no")' 2>/dev/null || echo no)"
+  if [[ "$required" != "yes" ]]; then echo "Existing administrator account detected; keeping current credentials."; return 0; fi
+  if [[ ! -r /dev/tty ]]; then echo "No interactive terminal detected. Complete first-admin setup from the OMCP setup page."; return 0; fi
+  existing="$(printf '%s' "$status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("setupUsername") or "")' 2>/dev/null || true)"
+  echo
+  echo "===== OMCP FIRST ADMIN SETUP ====="
+  if [[ -n "$existing" ]]; then username="$existing"; echo "Securing existing legacy admin: $username"; else read -r -p "Admin username: " username </dev/tty; fi
+  read -r -p "Admin email: " email </dev/tty
+  read -r -s -p "Admin password (10-128 characters): " password </dev/tty; echo
+  read -r -s -p "Confirm admin password: " confirm </dev/tty; echo
+  if [[ "$password" != "$confirm" ]]; then echo "Passwords did not match. Complete setup from the OMCP setup page."; unset password confirm; return 0; fi
+  payload="$(OMCP_SETUP_USERNAME="$username" OMCP_SETUP_EMAIL="$email" OMCP_SETUP_PASSWORD="$password" python3 -c 'import json,os; print(json.dumps({"username":os.environ["OMCP_SETUP_USERNAME"],"email":os.environ["OMCP_SETUP_EMAIL"],"password":os.environ["OMCP_SETUP_PASSWORD"]}))')"
+  response="$(printf '%s' "$payload" | curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8765/api/setup 2>&1)" || { echo "Admin setup failed: $response"; unset password confirm payload; return 0; }
+  printf '%s' "$response" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Administrator created: "+d["user"]["username"] if d.get("user") else "Administrator setup completed")'
+  unset password confirm payload response
+}
+
+rm -f "$DATA/panel-url.tmp" "$DATA/panel-url"
 SYSTEMD_STATE=""
 SYSTEMD_OK=0
 if command -v systemctl >/dev/null 2>&1; then
@@ -91,6 +120,8 @@ UNIT
   systemctl daemon-reload
   systemctl enable omcp
   if systemctl is-active --quiet omcp; then systemctl restart omcp; else systemctl start omcp; fi
+  sleep 2
+  configure_first_admin
   cat >/etc/systemd/system/omcp-tunnel.service <<'TUNNEL'
 [Unit]
 Description=OMCP stable HTTPS tunnel via tunnl.gg
@@ -113,7 +144,12 @@ UMask=0027
 WantedBy=multi-user.target
 TUNNEL
   systemctl daemon-reload
-  systemctl enable --now omcp-tunnel.service
+  systemctl enable omcp-tunnel.service
+  if systemctl is-active --quiet omcp-tunnel.service; then
+    systemctl restart omcp-tunnel.service
+  else
+    systemctl start omcp-tunnel.service
+  fi
   sleep 2
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
@@ -132,6 +168,7 @@ else
   sleep 2
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
     echo "OMCP background process started (PID $(cat "$DATA/agent.pid"))."
+    configure_first_admin
   else
     echo "OMCP did not start. Recent log:"
     tail -n 60 "$DATA/agent.log" 2>/dev/null || true
@@ -154,3 +191,30 @@ echo "OpenJDK 21 was installed. Verify with: java -version"
 echo "Cloud Shell sessions are temporary; processes and files may be lost when the session ends."
 echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL." 
 echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."
+
+echo
+echo "Waiting for the OMCP HTTPS URL (up to 90 seconds)..."
+PANEL_URL=""
+for _ in {1..90}; do
+  if [[ -s "$DATA/panel-url" ]]; then
+    PANEL_URL="$(tr -d '\r\n' <"$DATA/panel-url")"
+    if [[ "$PANEL_URL" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then break; fi
+    PANEL_URL=""
+  fi
+  sleep 1
+done
+if [[ -n "$PANEL_URL" ]]; then
+  echo "=================================================="
+  echo "OMCP PANEL URL: $PANEL_URL"
+  echo "=================================================="
+else
+  echo "Tunnel is not connected yet. The panel may still be running locally."
+  echo "Check: sudo tail -n 80 /var/lib/omcp/tunnl.log"
+  echo "Check API: curl -sS http://127.0.0.1:8765/api/health"
+  if [[ -f /etc/systemd/system/omcp-tunnel.service ]]; then
+    echo "Tunnel service: sudo systemctl status omcp-tunnel --no-pager"
+  else
+    echo "Tunnel process: sudo ps -ef | grep '[s]sh.*proxy.tunnl.gg'"
+  fi
+fi
+

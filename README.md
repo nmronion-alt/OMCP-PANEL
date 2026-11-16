@@ -19,13 +19,44 @@
 
 ## ⚡ Install OMCP
 
-Run this **single command** on a fresh Ubuntu/Debian VPS with `sudo` access:
+Run this command on a fresh Ubuntu/Debian VPS with root or `sudo` access:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/install-omcp.sh -o /tmp/omcp.sh && sudo bash /tmp/omcp.sh && for i in $(seq 1 60); do u=$(sudo grep -Eo 'https://[A-Za-z0-9.-]+\.tunnl\.gg' /var/lib/omcp/tunnl.log 2>/dev/null | tail -n 1 || true); [ -n "$u" ] && { echo "OMCP PANEL: $u"; exit 0; }; sleep 2; done; echo "Tunnel pending — check /var/lib/omcp/tunnl.log"
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation/install-omcp.sh" -o /tmp/omcp-install.sh && sudo bash /tmp/omcp-install.sh
 ```
 
-The installer sets up OMCP and starts its panel tunnel. When the tunnel connects, the command prints the **Panel Link** in your terminal. Open that link in your browser.
+The installer reads tunnl.gg's machine-readable JSON tunnel event and saves the public URL to `/var/lib/omcp/panel-url`. It waits up to 90 seconds and prints **OMCP PANEL URL** when the tunnel connects. It no longer guesses the URL by grepping the human-readable tunnel log.
+
+### Update an existing installation
+
+Run the same installer command again. It updates OMCP while preserving `/var/lib/omcp`, including users, server files, worlds, backups and the stable tunnel SSH identity.
+
+### Uninstall OMCP
+
+Remove the OMCP application and service definitions while keeping server files and backups:
+
+```bash
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo bash /tmp/omcp-uninstall.sh
+```
+
+The uninstaller asks you to type `REMOVE-OMCP`. By default it preserves `/var/lib/omcp`. To also permanently delete server files, worlds, backups, users and configuration:
+
+```bash
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo OMCP_PURGE_DATA=1 bash /tmp/omcp-uninstall.sh
+```
+
+**Warning:** The purge option permanently deletes OMCP data. Download any backups you need first.
+
+### If the URL is not printed
+
+```bash
+curl -sS http://127.0.0.1:8765/api/health
+sudo tail -n 80 /var/lib/omcp/tunnl.log
+sudo cat /var/lib/omcp/panel-url 2>/dev/null || true
+sudo systemctl status omcp omcp-tunnel --no-pager
+```
+
+On hosts without systemd, inspect processes with `sudo ps -ef | grep -E '[o]mcp_agent.py|[r]un-tunnel.sh'`.
 
 > **Note:** This installer targets Ubuntu/Debian systems. Use a persistent VPS for a panel that should stay online. Temporary cloud-shell sessions can stop or lose their files when the session ends.
 
