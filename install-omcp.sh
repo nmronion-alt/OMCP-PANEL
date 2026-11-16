@@ -8,6 +8,10 @@ MODE="${OMCP_INSTALL_MODE:-nonipv4}"
 if [[ "$MODE" != "ipv4" && "$MODE" != "nonipv4" ]]; then echo "Invalid OMCP install mode."; exit 1; fi
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
+if [[ "$MODE" == "nonipv4" && -L /etc/nginx/sites-enabled/omcp ]]; then
+  rm -f /etc/nginx/sites-enabled/omcp
+  if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || true; fi
+fi
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless openssh-client
 DEBIAN_FRONTEND=noninteractive apt-get install -y cpulimit >/dev/null 2>&1 || true
@@ -192,10 +196,10 @@ else
 fi
 echo
 echo "OMCP panel listener: http://127.0.0.1:8765"
-echo "Panel is bound to localhost. tunnl.gg HTTPS tunnel reconnects automatically using a persistent SSH identity."
+if [[ "$MODE" == "nonipv4" ]]; then echo "Panel is bound to localhost. tunnl.gg HTTPS tunnel reconnects automatically using a persistent SSH identity."; else echo "IPv4 mode selected. No panel tunnel is started."; fi
 echo "OpenJDK 21 was installed. Verify with: java -version"
 echo "Cloud Shell sessions are temporary; processes and files may be lost when the session ends."
-echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL." 
+if [[ "$MODE" == "nonipv4" ]]; then echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL."; fi 
 echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."
 
 echo
