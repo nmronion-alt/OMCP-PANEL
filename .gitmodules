@@ -1,0 +1,4 @@
+[submodule "upstream/pterodactyl-panel"]
+	path = upstream/pterodactyl-panel
+	url = https://github.com/pterodactyl/panel.git
+	branch = 1.0-develop
