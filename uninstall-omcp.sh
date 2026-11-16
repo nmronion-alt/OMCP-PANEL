@@ -59,6 +59,7 @@ rm -f /usr/local/bin/omcp-url
 if [[ "$PURGE_DATA" == "1" ]]; then
   rm -rf "$DATA"
   if id omcp >/dev/null 2>&1; then userdel omcp 2>/dev/null || true; fi
+  if getent group omcp >/dev/null 2>&1; then groupdel omcp 2>/dev/null || true; fi
   echo "OMCP application and data have been removed."
 else
   echo "OMCP application has been removed. Data is preserved at $DATA."
