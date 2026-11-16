@@ -149,7 +149,11 @@ configure_ipv4_proxy(){
   if [[ "$host" != "$public_ip" ]]; then
     if [[ ! "$host" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then echo "Enter the VPS IPv4 ($public_ip) or a valid domain."; return 1; fi
     resolved="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)"
-    if [[ "$resolved" != "$public_ip" ]]; then echo "DNS A record for $host must point to $public_ip (currently: ${resolved:-not resolved})."; return 1; fi
+    if [[ "$resolved" != "$public_ip" ]]; then
+      echo "DNS resolves to ${resolved:-no IPv4}; if using Cloudflare proxy, confirm the origin A record points to $public_ip."
+      read -r -p "Type YES to continue: " confirm
+      [[ "$confirm" == "YES" ]] || return 1
+    fi
   fi
   DEBIAN_FRONTEND=noninteractive apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx
