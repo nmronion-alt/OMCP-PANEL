@@ -1711,6 +1711,28 @@ class Handler(BaseHTTPRequestHandler):
                 with SESSION_LOCK: SESSIONS.pop(header[7:],None)
             return send(self,200,{"ok":True})
         if not self.auth(): return send(self,401,{"error":"Login required"})
+        if path=="/api/account/update":
+            try:
+                d=body(self); old_username=self.username; username=str(d.get("username","")).strip(); email=str(d.get("email","")).strip().lower(); current_password=str(d.get("currentPassword","")); new_password=str(d.get("newPassword",""))
+                users=load_users(); record=users.get(old_username)
+                if not record or not record.get("password") or not password_ok(current_password,record): return send(self,401,{"error":"Enter your current password to confirm these changes"})
+                if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
+                if not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+",email): raise ValueError("Enter a valid email address")
+                canonical=username.lower()
+                if any(u.casefold()==canonical.casefold() and u!=old_username for u in users): return send(self,409,{"error":"Username already exists"})
+                if any(u!=old_username and v.get("email","").casefold()==email for u,v in users.items()): return send(self,409,{"error":"Email address is already in use"})
+                if new_password and (len(new_password)<10 or len(new_password)>128): raise ValueError("New password must be 10-128 characters")
+                record["email"]=email
+                if new_password: record["password"]=password_hash(new_password)
+                if canonical!=old_username:
+                    users.pop(old_username); users[canonical]=record
+                    with SESSION_LOCK:
+                        for item in SESSIONS.values():
+                            if item["username"]==old_username: item["username"]=canonical
+                    self.username=canonical
+                save_users(users)
+                return send(self,200,{"user":{"username":canonical,"email":email,"role":record.get("role","user")}})
+            except Exception as e: return send(self,400,{"error":str(e)})
         if path=="/api/users":
             try:
                 if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
