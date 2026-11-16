@@ -22,7 +22,7 @@
 Run this command on a fresh Ubuntu/Debian VPS with root or `sudo` access:
 
 ```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation/install-omcp.sh" -o /tmp/omcp-install.sh && sudo bash /tmp/omcp-install.sh
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/install-omcp.sh" -o /tmp/omcp-install.sh && sudo bash /tmp/omcp-install.sh
 ```
 
 The installer reads tunnl.gg's machine-readable JSON tunnel event and saves the public URL to `/var/lib/omcp/panel-url`. It waits up to 90 seconds and prints **OMCP PANEL URL** when the tunnel connects. It no longer guesses the URL by grepping the human-readable tunnel log.
@@ -36,13 +36,13 @@ Run the same installer command again. It updates OMCP while preserving `/var/lib
 Remove the OMCP application and service definitions while keeping server files and backups:
 
 ```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo bash /tmp/omcp-uninstall.sh
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo bash /tmp/omcp-uninstall.sh
 ```
 
 The uninstaller asks you to type `REMOVE-OMCP`. By default it preserves `/var/lib/omcp`. To also permanently delete server files, worlds, backups, users and configuration:
 
 ```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo OMCP_PURGE_DATA=1 bash /tmp/omcp-uninstall.sh
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/uninstall-omcp.sh" -o /tmp/omcp-uninstall.sh && sudo OMCP_PURGE_DATA=1 bash /tmp/omcp-uninstall.sh
 ```
 
 **Warning:** The purge option permanently deletes OMCP data. Download any backups you need first.
