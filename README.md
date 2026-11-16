@@ -27,6 +27,23 @@ curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronio
 
 The installer opens an interactive IPv4 / Non-IPv4 menu. Non-IPv4 installation waits for a valid tunnl.gg HTTPS URL and exits with an error if no public URL is received. IPv4 mode uses a direct reverse proxy; a domain can receive HTTPS through Let's Encrypt, while IP-only access uses HTTP.
 
+## 🔄 Update an existing VPS
+
+Open the latest menu (the menu is downloaded fresh from GitHub each time):
+
+```bash
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/omcp-menu.sh" -o /tmp/omcp-menu.sh && sudo bash /tmp/omcp-menu.sh
+```
+
+Choose **IPv4 Mode** or **Non-IPv4 Mode**, then select **[5] Update OMCP**. The updater downloads the latest panel code from the GitHub `main` branch, validates it, makes a rollback backup of `/opt/omcp`, replaces the application files and restarts the OMCP agent. It does not delete or overwrite `/var/lib/omcp`, so Minecraft servers, worlds, plugins, backups, users and configuration remain in place.
+
+You can also run the updater directly:
+
+```bash
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/update-omcp.sh" -o /tmp/update-omcp.sh && sudo bash /tmp/update-omcp.sh
+```
+
+
 ## ✨ What is OMCP?
 
 OMCP is a self-hosted control panel for managing Minecraft Java servers on your own Linux host. It includes a web dashboard and a local agent that controls the Minecraft server process and its files.
