@@ -30,8 +30,9 @@ fetch_script(){
   echo "$out"
 }
 user_manager(){
+  if ! id omcp >/dev/null 2>&1; then echo "Install OMCP first, then manage panel users."; return; fi
   python3 - <<'PY'
-import os, json, re, time, base64, hashlib, secrets, getpass, pathlib
+import os, json, re, time, base64, hashlib, secrets, getpass, pathlib, pwd, grp
 p=pathlib.Path("/var/lib/omcp/users.json")
 p.parent.mkdir(parents=True,exist_ok=True)
 def load():
@@ -42,7 +43,10 @@ def load():
 def save(d):
     t=p.with_suffix(".tmp")
     t.write_text(json.dumps(d,indent=2))
-    os.chmod(t,0o600); t.replace(p)
+    os.chmod(t,0o600)
+    try: os.chown(t,pwd.getpwnam("omcp").pw_uid,grp.getgrnam("omcp").gr_gid)
+    except KeyError: pass
+    t.replace(p)
 def pw():
     a=getpass.getpass("Password (10-128 chars): ")
     b=getpass.getpass("Confirm password: ")
@@ -154,7 +158,7 @@ NGINX
   ln -sfn /etc/nginx/sites-available/omcp /etc/nginx/sites-enabled/omcp
   rm -f /etc/nginx/sites-enabled/default
   nginx -t
-  systemctl enable --now nginx
+  systemctl enable --now nginx 2>/dev/null || service nginx start
   if [[ "$host" != "$public_ip" ]]; then
     if [[ -z "$email" ]]; then echo "A valid email is required for the HTTPS certificate."; return 1; fi
     certbot --nginx --non-interactive --agree-tos --redirect --email "$email" -d "$host"
