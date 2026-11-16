@@ -90,6 +90,7 @@ while True:
     print("\033[1;35m╭────────────── OMCP USER MANAGEMENT ──────────────╮\033[0m")
     print("\033[1;36m  [1]\033[0m New User       \033[1;36m[2]\033[0m Manage User (Role)")
     print("\033[1;36m  [3]\033[0m Delete User    \033[1;36m[4]\033[0m List Users")
+    print("\033[1;36m  [5]\033[0m Reset User Password")
     print("\033[1;33m  [0]\033[0m Back")
     print("\033[1;35m╰─────────────────────────────────────────────────╯\033[0m")
     choice=input("\033[1;32m  ➜ Select option: \033[0m").strip()
@@ -124,6 +125,11 @@ while True:
             del users[name]; save(users); print("Deleted",name)
         elif choice=="4":
             for k,v in users.items(): print(f"{k} | {v.get('email','')} | {v.get('role','user')}")
+        elif choice=="5":
+            for k,v in users.items(): print(f"{k} | {v.get('email','')} | {v.get('role','user')}")
+            name=input("Username to reset password: ").strip()
+            if name not in users: raise ValueError("User not found.")
+            users[name]["password"]=pw(); save(users); print("Password reset for",name)
         else: print("Invalid option.")
     except Exception as e: print("ERROR:",e)
 PY
