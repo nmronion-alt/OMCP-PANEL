@@ -1772,7 +1772,7 @@ class Handler(BaseHTTPRequestHandler):
                 username=str(d.get("newUsername",old)).strip().lower(); email=str(d.get("email",record.get("email",""))).strip().lower(); role=str(d.get("role",record.get("role","user")))
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Invalid username")
                 if role not in ("admin","user"): raise ValueError("Invalid role")
-                if not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+",email): raise ValueError("Enter a valid email address")
+                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
                 if any(k!=old and k.casefold()==username.casefold() for k in users): raise ValueError("Username already exists")
                 if any(k!=old and v.get("email","").casefold()==email for k,v in users.items()): raise ValueError("Email already in use")
                 if record.get("role")=="admin" and role!="admin" and sum(1 for v in users.values() if v.get("role")=="admin")<=1: raise ValueError("Cannot demote the last administrator")
