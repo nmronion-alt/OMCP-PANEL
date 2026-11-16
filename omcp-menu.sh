@@ -93,6 +93,7 @@ while True:
 PY
 }
 minecraft_ip(){
+  if ! id omcp >/dev/null 2>&1; then echo "Install OMCP first, then configure the Minecraft domain."; return; fi
   local domain port
   read -r -p "Minecraft domain (example: mc.example.com): " domain
   read -r -p "Minecraft server port [25565]: " port
