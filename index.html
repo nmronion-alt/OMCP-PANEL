@@ -238,6 +238,8 @@ function applyTheme(){
  if($("accentColor")) $("accentColor").value=accent;
  if($("sideOpacity")) $("sideOpacity").value=sideOpacity;
  if($("cardOpacity")) $("cardOpacity").value=cardOpacity;
+ if($("sideOpacityValue")) $("sideOpacityValue").textContent=sideOpacity+"%";
+ if($("cardOpacityValue")) $("cardOpacityValue").textContent=cardOpacity+"%";
 }
 $("saveTheme").onclick=()=>{localStorage.setItem("omcp-bg",$("bgImage").value.trim());localStorage.setItem("omcp-accent",$("accentColor").value);localStorage.setItem("omcp-side-opacity",$("sideOpacity").value);localStorage.setItem("omcp-card-opacity",$("cardOpacity").value);applyTheme();$("themeMsg").textContent="Saved in this browser"};
 function previewOpacity(){const a=$("sideOpacity").value,b=$("cardOpacity").value;document.documentElement.style.setProperty("--side-alpha",String(Number(a)/100));document.documentElement.style.setProperty("--card-alpha",String(Number(b)/100));if($("sideOpacityValue"))$("sideOpacityValue").textContent=a+"%";if($("cardOpacityValue"))$("cardOpacityValue").textContent=b+"%";}
