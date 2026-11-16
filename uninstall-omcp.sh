@@ -51,6 +51,11 @@ stop_recorded_process "$DATA/tunnel.pid" "/opt/omcp/run-tunnel.sh"
 stop_recorded_process "$DATA/agent.pid" "/opt/omcp/omcp_agent.py"
 
 # Remove only OMCP's own service definitions and app directory.
+# Remove only OMCP's own Nginx site; leave Nginx and other virtual hosts installed.
+if [[ -e /etc/nginx/sites-enabled/omcp || -e /etc/nginx/sites-available/omcp ]]; then
+  rm -f /etc/nginx/sites-enabled/omcp /etc/nginx/sites-available/omcp
+  if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || true; fi
+fi
 rm -f /etc/systemd/system/omcp.service /etc/systemd/system/omcp-tunnel.service
 if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload 2>/dev/null || true; systemctl reset-failed omcp.service omcp-tunnel.service 2>/dev/null || true; fi
 rm -rf "$APP"
