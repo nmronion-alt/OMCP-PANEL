@@ -64,9 +64,9 @@ configure_first_admin() {
   read -r -p "Admin email: " email </dev/tty
   read -r -s -p "Admin password (10-128 characters): " password </dev/tty; echo
   read -r -s -p "Confirm admin password: " confirm </dev/tty; echo
-  if [[ "$password" != "$confirm" ]]; then echo "Passwords did not match. Complete setup from the OMCP setup page."; unset password confirm; return 1; fi
+  if [[ "$password" != "$confirm" ]]; then echo "Passwords did not match. Complete setup from the OMCP setup page."; unset password confirm; return 0; fi
   payload="$(OMCP_SETUP_USERNAME="$username" OMCP_SETUP_EMAIL="$email" OMCP_SETUP_PASSWORD="$password" python3 -c 'import json,os; print(json.dumps({"username":os.environ["OMCP_SETUP_USERNAME"],"email":os.environ["OMCP_SETUP_EMAIL"],"password":os.environ["OMCP_SETUP_PASSWORD"]}))')"
-  response="$(printf '%s' "$payload" | curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8765/api/setup 2>&1)" || { echo "Admin setup failed: $response"; unset password confirm payload; return 1; }
+  response="$(printf '%s' "$payload" | curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8765/api/setup 2>&1)" || { echo "Admin setup failed: $response"; unset password confirm payload; return 0; }
   printf '%s' "$response" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Administrator created: "+d["user"]["username"] if d.get("user") else "Administrator setup completed")'
   unset password confirm payload response
 }
