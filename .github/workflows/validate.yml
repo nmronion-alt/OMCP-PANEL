@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "22"
       - name: Check installer and uninstaller shell syntax
-        run: bash -n omcp-menu.sh install-omcp.sh uninstall-omcp.sh
+        run: bash -n omcp-menu.sh install-omcp.sh update-omcp.sh uninstall-omcp.sh
       - name: Compile Python agent
         run: python -m py_compile agent/omcp_agent.py
       - name: Extract and check panel JavaScript
