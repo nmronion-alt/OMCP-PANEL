@@ -1701,8 +1701,10 @@ class Handler(BaseHTTPRequestHandler):
                     login_id=username.strip().casefold()
                     canonical=next((u for u,r in users.items() if str(u).strip().casefold()==login_id or str(r.get("email") or "").strip().casefold()==login_id),None)
                     record=users.get(canonical) if canonical else None
-                    if not record or not record.get("password") or not password_ok(password,record):
-                        return send(self,401,{"error":"Incorrect username/email or password."})
+                    if not record:
+                        return send(self,401,{"field":"username","error":"Username or email address was not found."})
+                    if not record.get("password") or not password_ok(password,record):
+                        return send(self,401,{"field":"password","error":"Incorrect password."})
                     username=canonical
                 return send(self,200,{"token":new_session(username),"user":{"username":username,"email":users[username].get("email",""),"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
