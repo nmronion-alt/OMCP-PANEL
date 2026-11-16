@@ -254,6 +254,15 @@ run_uninstall(){
   script="$(fetch_script uninstall-omcp.sh)"
   bash "$script"
 }
+run_update(){
+  local script
+  if [[ ! -d /opt/omcp || ! -d /var/lib/omcp ]]; then
+    echo "OMCP installation was not found on this VPS."
+    return 1
+  fi
+  script="$(fetch_script update-omcp.sh)"
+  bash "$script"
+}
 mode_menu(){
   local mode="$1" label="$2" choice
   while true; do
@@ -264,6 +273,7 @@ mode_menu(){
     option 2 "Uninstall OMCP"
     option 3 "User Management"
     if [[ "$mode" == "ipv4" ]]; then option 4 "Minecraft IP / Domain"; else option 4 "Tunnel Management"; fi
+    option 5 "Update OMCP — fetch latest GitHub version"
     option 0 "Back"
     printf "\n  ${BOLD}${GREEN}➜ Enter option:${RESET} "
     read -r choice
@@ -272,6 +282,7 @@ mode_menu(){
       2) run_uninstall; pause ;;
       3) user_manager ;;
       4) if [[ "$mode" == "ipv4" ]]; then minecraft_ip; else tunnel_menu; fi; pause ;;
+      5) run_update; pause ;;
       0) return ;;
       *) echo "Invalid option."; pause ;;
     esac
