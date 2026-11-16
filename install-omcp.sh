@@ -191,6 +191,9 @@ else
     sleep 3
     echo "tunnl.gg URL/log: sudo tail -n 40 $DATA/tunnl.log"
     echo "Stop this no-systemd tunnel: sudo kill \$(cat $DATA/tunnel.pid)"
+  else
+    if [[ -f "$DATA/tunnel.pid" ]] && kill -0 "$(cat "$DATA/tunnel.pid")" 2>/dev/null; then kill "$(cat "$DATA/tunnel.pid")" 2>/dev/null || true; fi
+    rm -f "$DATA/tunnel.pid"
   fi
   echo "Stop this no-systemd panel: sudo kill \$(cat $DATA/agent.pid)"
 fi
