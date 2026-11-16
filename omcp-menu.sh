@@ -128,6 +128,20 @@ tunnel_menu(){
     esac
   done
 }
+validate_ipv4_target(){
+  local host="$1" public_ip resolved
+  public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org)" || { echo "ERROR: Could not detect the VPS public IPv4."; return 1; }
+  if [[ ! "$public_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then echo "ERROR: Invalid public IPv4 response: $public_ip"; return 1; fi
+  echo "Detected VPS public IPv4: $public_ip"
+  if [[ "$host" == "$public_ip" ]]; then return 0; fi
+  if [[ ! "$host" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then echo "Enter the detected public IPv4 ($public_ip) or a valid domain."; return 1; fi
+  resolved="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+  if [[ "$resolved" != "$public_ip" ]]; then
+    echo "DNS currently resolves $host to ${resolved:-no IPv4}; VPS IPv4 is $public_ip."
+    read -r -p "If you use Cloudflare proxy/CDN, verify its origin A record then type YES to continue: " confirm
+    [[ "$confirm" == "YES" ]] || return 1
+  fi
+}
 configure_ipv4_proxy(){
   local host="$1" email="$2" public_ip resolved panel_url
   public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org)"
@@ -147,16 +161,15 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8765;
         proxy_http_version 1.1;
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 3600s;
     }
 }
 NGINX
   ln -sfn /etc/nginx/sites-available/omcp /etc/nginx/sites-enabled/omcp
-  rm -f /etc/nginx/sites-enabled/default
   nginx -t
   systemctl enable --now nginx 2>/dev/null || service nginx start
   if [[ "$host" != "$public_ip" ]]; then
@@ -179,6 +192,7 @@ run_install(){
   if [[ "$mode" == "ipv4" ]]; then
     read -r -p "Panel public IPv4 or custom domain: " host
     if [[ -z "$host" ]]; then echo "A public IP or domain is required."; return; fi
+    validate_ipv4_target "$host" || return 1
     if [[ "$host" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
       read -r -p "Email for HTTPS certificate: " email
     fi
