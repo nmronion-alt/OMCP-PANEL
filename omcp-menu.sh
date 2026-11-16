@@ -79,8 +79,8 @@ def save(d):
     except KeyError: pass
     t.replace(p)
 def pw():
-    a=getpass.getpass("Password (10-128 chars): ")
-    b=getpass.getpass("Confirm password: ")
+    a=input("Password (10-128 chars, visible): ")
+    b=input("Confirm password (visible): ")
     if a!=b or not 10<=len(a)<=128: raise ValueError("Passwords must match and be 10-128 characters.")
     salt=secrets.token_bytes(16)
     return {"salt":base64.b64encode(salt).decode(),"hash":base64.b64encode(hashlib.pbkdf2_hmac("sha256",a.encode(),salt,310000)).decode(),"iterations":310000}
