@@ -22,10 +22,10 @@
 Run this command on a fresh Ubuntu/Debian VPS with root or `sudo` access:
 
 ```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/install-omcp.sh" -o /tmp/omcp-install.sh && sudo bash /tmp/omcp-install.sh
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/omcp-menu.sh" -o /tmp/omcp-menu.sh && sudo bash /tmp/omcp-menu.sh
 ```
 
-The installer reads tunnl.gg's machine-readable JSON tunnel event and saves the public URL to `/var/lib/omcp/panel-url`. It waits up to 90 seconds and prints **OMCP PANEL URL** when the tunnel connects. It no longer guesses the URL by grepping the human-readable tunnel log.
+The installer opens an interactive IPv4 / Non-IPv4 menu. Non-IPv4 installation waits for a valid tunnl.gg HTTPS URL and exits with an error if no public URL is received. IPv4 mode uses a direct reverse proxy; a domain can receive HTTPS through Let's Encrypt, while IP-only access uses HTTP.
 
 ## ✨ What is OMCP?
 
