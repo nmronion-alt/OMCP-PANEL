@@ -1545,8 +1545,7 @@ class Handler(BaseHTTPRequestHandler):
             try: return send(self,200,WEB.read_bytes(),"text/html; charset=utf-8")
             except Exception: return send(self,404,{"error":"UI file missing"})
         if path in ("/admin","/admin/","/admin/index.html","/admin.css","/admin.js"):
-            if not self.auth():
-                self.send_response(302); self.send_header("Location","/"); self.end_headers(); return
+            # Static shell only; all private data and actions remain behind authenticated admin APIs.
             rel="index.html" if path in ("/admin","/admin/","/admin/index.html") else path.lstrip("/")
             target=(WEB.parent/"admin"/rel).resolve()
             if target.parent!=(WEB.parent/"admin").resolve() or not target.is_file(): return send(self,404,{"error":"Admin workspace asset missing"})
