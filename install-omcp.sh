@@ -29,13 +29,18 @@ install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
 curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py.new"
 curl -fsSL "$REPO/index.html" -o "$APP/index.html.new"
-# Publish only fully downloaded files.
+install -d -o root -g omcp -m 0750 "$APP/admin"
+for asset in index.html admin.css admin.js admin.ts; do
+  curl -fsSL "$REPO/admin/$asset" -o "$APP/admin/$asset.new"
+done
+# Publish only fully downloaded files; retain the existing user/server data directory untouched.
 mv "$APP/omcp_agent.py.new" "$APP/omcp_agent.py"
 mv "$APP/index.html.new" "$APP/index.html"
+for asset in index.html admin.css admin.js admin.ts; do mv "$APP/admin/$asset.new" "$APP/admin/$asset"; done
 # Validate the complete agent source before stopping/restarting the existing process.
 python3 -m py_compile "$APP/omcp_agent.py"
-chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
-chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
+chown root:omcp "$APP/omcp_agent.py" "$APP/index.html" "$APP/admin/"*
+chmod 0640 "$APP/omcp_agent.py" "$APP/index.html" "$APP/admin/"*
 
 if [[ "$MODE" == "nonipv4" ]]; then
 # Keep one SSH identity so tunnl.gg can return the same free stable URL after reconnects.
