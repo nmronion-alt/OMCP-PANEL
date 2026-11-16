@@ -1698,7 +1698,8 @@ class Handler(BaseHTTPRequestHandler):
                     users[username]={"role":"admin","created":int(time.time()),"email":email,"password":password_hash(password)}
                     save_users(users)
                 else:
-                    canonical=next((u for u,r in users.items() if u.strip().casefold()==username.casefold() or r.get("email","").casefold()==username.casefold()),None)
+                    login_id=username.strip().casefold()
+                    canonical=next((u for u,r in users.items() if str(u).strip().casefold()==login_id or str(r.get("email") or "").strip().casefold()==login_id),None)
                     record=users.get(canonical) if canonical else None
                     if not record or not record.get("password") or not password_ok(password,record):
                         return send(self,401,{"error":"Incorrect username/email or password."})
