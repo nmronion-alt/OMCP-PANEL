@@ -124,6 +124,52 @@ tunnel_menu(){
     esac
   done
 }
+configure_ipv4_proxy(){
+  local host="$1" email="$2" public_ip resolved panel_url
+  public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org)"
+  if [[ ! "$public_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then echo "ERROR: Public IPv4 detection failed."; return 1; fi
+  if [[ "$host" != "$public_ip" ]]; then
+    if [[ ! "$host" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then echo "Enter the VPS IPv4 ($public_ip) or a valid domain."; return 1; fi
+    resolved="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+    if [[ "$resolved" != "$public_ip" ]]; then echo "DNS A record for $host must point to $public_ip (currently: ${resolved:-not resolved})."; return 1; fi
+  fi
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-nginx
+  cat >/etc/nginx/sites-available/omcp <<NGINX
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $host;
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme;
+        proxy_read_timeout 3600s;
+    }
+}
+NGINX
+  ln -sfn /etc/nginx/sites-available/omcp /etc/nginx/sites-enabled/omcp
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t
+  systemctl enable --now nginx
+  if [[ "$host" != "$public_ip" ]]; then
+    if [[ -z "$email" ]]; then echo "A valid email is required for the HTTPS certificate."; return 1; fi
+    certbot --nginx --non-interactive --agree-tos --redirect --email "$email" -d "$host"
+    panel_url="https://$host"
+  else
+    panel_url="http://$host"
+    echo "WARNING: IP-only access is HTTP. Use a domain to enable trusted HTTPS."
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then ufw allow 80/tcp || true; ufw allow 443/tcp || true; fi
+  printf '%s\n' "$panel_url" >/var/lib/omcp/panel-url
+  echo
+  echo "=================================================="
+  echo "OMCP PANEL URL: $panel_url"
+  echo "=================================================="
+}
 run_install(){
   local mode="$1" host email script
   if [[ "$mode" == "ipv4" ]]; then
@@ -135,6 +181,7 @@ run_install(){
   fi
   script="$(fetch_script install-omcp.sh)"
   OMCP_INSTALL_MODE="$mode" OMCP_PANEL_HOST="${host:-}" OMCP_PANEL_EMAIL="${email:-}" bash "$script"
+  if [[ "$mode" == "ipv4" ]]; then configure_ipv4_proxy "$host" "$email"; fi
 }
 run_uninstall(){
   local script
