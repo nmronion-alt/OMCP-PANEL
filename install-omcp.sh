@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 # OMCP installer for Ubuntu/Debian. Supports systemd VPS and no-systemd shells.
-REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/ui/omcp-v2-foundation"
+REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
+MODE="${OMCP_INSTALL_MODE:-nonipv4}"
+if [[ "$MODE" != "ipv4" && "$MODE" != "nonipv4" ]]; then echo "Invalid OMCP install mode."; exit 1; fi
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
 apt-get update
@@ -122,6 +124,7 @@ UNIT
   if systemctl is-active --quiet omcp; then systemctl restart omcp; else systemctl start omcp; fi
   sleep 2
   configure_first_admin
+  if [[ "$MODE" == "nonipv4" ]]; then
   cat >/etc/systemd/system/omcp-tunnel.service <<'TUNNEL'
 [Unit]
 Description=OMCP stable HTTPS tunnel via tunnl.gg
@@ -151,6 +154,9 @@ TUNNEL
     systemctl start omcp-tunnel.service
   fi
   sleep 2
+  else
+    systemctl disable --now omcp-tunnel.service 2>/dev/null || true
+  fi
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
   echo "First-run Admin setup: sudo journalctl -u omcp -n 80 --no-pager"
@@ -175,13 +181,13 @@ else
     exit 1
   fi
   echo "First-run Admin setup / startup log: sudo cat $DATA/agent.log"
-  if [[ -f "$DATA/tunnel.pid" ]] && kill -0 "$(cat "$DATA/tunnel.pid")" 2>/dev/null; then
-    kill "$(cat "$DATA/tunnel.pid")" 2>/dev/null || true
+  if [[ "$MODE" == "nonipv4" ]]; then
+    if [[ -f "$DATA/tunnel.pid" ]] && kill -0 "$(cat "$DATA/tunnel.pid")" 2>/dev/null; then kill "$(cat "$DATA/tunnel.pid")" 2>/dev/null || true; fi
+    runuser -u omcp -- sh -c 'nohup /opt/omcp/run-tunnel.sh </dev/null >/dev/null 2>&1 & echo $! >/var/lib/omcp/tunnel.pid'
+    sleep 3
+    echo "tunnl.gg URL/log: sudo tail -n 40 $DATA/tunnl.log"
+    echo "Stop this no-systemd tunnel: sudo kill \$(cat $DATA/tunnel.pid)"
   fi
-  runuser -u omcp -- sh -c 'nohup /opt/omcp/run-tunnel.sh </dev/null >/dev/null 2>&1 & echo $! >/var/lib/omcp/tunnel.pid'
-  sleep 3
-  echo "tunnl.gg URL/log: sudo tail -n 40 $DATA/tunnl.log"
-  echo "Stop this no-systemd tunnel: sudo kill \$(cat $DATA/tunnel.pid)"
   echo "Stop this no-systemd panel: sudo kill \$(cat $DATA/agent.pid)"
 fi
 echo
@@ -193,9 +199,12 @@ echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum sessi
 echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."
 
 echo
+if [[ "$MODE" == "ipv4" ]]; then
+  echo "IPv4 mode: panel URL will be configured by the installer menu."
+else
 echo "Waiting for the OMCP HTTPS URL (up to 90 seconds)..."
 PANEL_URL=""
-for _ in {1..90}; do
+for _ in {1..120}; do
   if [[ -s "$DATA/panel-url" ]]; then
     PANEL_URL="$(tr -d '\r\n' <"$DATA/panel-url")"
     if [[ "$PANEL_URL" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then break; fi
@@ -208,7 +217,7 @@ if [[ -n "$PANEL_URL" ]]; then
   echo "OMCP PANEL URL: $PANEL_URL"
   echo "=================================================="
 else
-  echo "Tunnel is not connected yet. The panel may still be running locally."
+  echo "ERROR: OMCP installed, but no public tunnel URL was received."
   echo "Check: sudo tail -n 80 /var/lib/omcp/tunnl.log"
   echo "Check API: curl -sS http://127.0.0.1:8765/api/health"
   if [[ -f /etc/systemd/system/omcp-tunnel.service ]]; then
@@ -216,5 +225,8 @@ else
   else
     echo "Tunnel process: sudo ps -ef | grep '[s]sh.*proxy.tunnl.gg'"
   fi
+  exit 1
 fi
 
+
+fi
