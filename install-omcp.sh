@@ -144,7 +144,12 @@ UMask=0027
 WantedBy=multi-user.target
 TUNNEL
   systemctl daemon-reload
-  systemctl enable --now omcp-tunnel.service
+  systemctl enable omcp-tunnel.service
+  if systemctl is-active --quiet omcp-tunnel.service; then
+    systemctl restart omcp-tunnel.service
+  else
+    systemctl start omcp-tunnel.service
+  fi
   sleep 2
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
