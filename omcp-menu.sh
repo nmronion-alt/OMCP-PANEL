@@ -57,6 +57,7 @@ fetch_script(){
 }
 user_manager(){
   if ! id omcp >/dev/null 2>&1; then echo "Install OMCP first, then manage panel users."; return; fi
+  clear 2>/dev/null || true
   python3 - <<'PY'
 import os, sys, json, re, time, base64, hashlib, secrets, getpass, pathlib, pwd, grp
 # Python source is supplied by heredoc; interactive answers must come from the actual terminal.
@@ -85,7 +86,8 @@ def pw():
     salt=secrets.token_bytes(16)
     return {"salt":base64.b64encode(salt).decode(),"hash":base64.b64encode(hashlib.pbkdf2_hmac("sha256",a.encode(),salt,310000)).decode(),"iterations":310000}
 while True:
-    print("\n\033[1;35m╭────────────── OMCP USER MANAGEMENT ──────────────╮\033[0m")
+    print("\033[2J\033[H", end="")
+    print("\033[1;35m╭────────────── OMCP USER MANAGEMENT ──────────────╮\033[0m")
     print("\033[1;36m  [1]\033[0m New User       \033[1;36m[2]\033[0m Manage User (Role)")
     print("\033[1;36m  [3]\033[0m Delete User    \033[1;36m[4]\033[0m List Users")
     print("\033[1;33m  [0]\033[0m Back")
@@ -262,7 +264,7 @@ mode_menu(){
     case "$choice" in
       1) run_install "$mode"; pause ;;
       2) run_uninstall; pause ;;
-      3) user_manager; pause ;;
+      3) user_manager ;;
       4) if [[ "$mode" == "ipv4" ]]; then minecraft_ip; else tunnel_menu; fi; pause ;;
       0) return ;;
       *) echo "Invalid option."; pause ;;
