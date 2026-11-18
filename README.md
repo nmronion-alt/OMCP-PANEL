@@ -19,30 +19,15 @@
 
 ## ⚡ Install OMCP
 
-Run this command on a fresh Ubuntu/Debian VPS with root or `sudo` access:
+Run this **single command** on a fresh Ubuntu/Debian VPS with `sudo` access:
 
 ```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/omcp-menu.sh" -o /tmp/omcp-menu.sh && sudo bash /tmp/omcp-menu.sh
+curl -fsSL https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/install-omcp.sh -o /tmp/omcp.sh && sudo bash /tmp/omcp.sh && for i in $(seq 1 60); do u=$(sudo grep -Eo 'https://[A-Za-z0-9.-]+\.tunnl\.gg' /var/lib/omcp/tunnl.log 2>/dev/null | tail -n 1 || true); [ -n "$u" ] && { echo "OMCP PANEL: $u"; exit 0; }; sleep 2; done; echo "Tunnel pending — check /var/lib/omcp/tunnl.log"
 ```
 
-The installer opens an interactive IPv4 / Non-IPv4 menu. Non-IPv4 installation waits for a valid tunnl.gg HTTPS URL and exits with an error if no public URL is received. IPv4 mode uses a direct reverse proxy; a domain can receive HTTPS through Let's Encrypt, while IP-only access uses HTTP.
+The installer sets up OMCP and starts its panel tunnel. When the tunnel connects, the command prints the **Panel Link** in your terminal. Open that link in your browser.
 
-## 🔄 Update an existing VPS
-
-Open the latest menu (the menu is downloaded fresh from GitHub each time):
-
-```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/omcp-menu.sh" -o /tmp/omcp-menu.sh && sudo bash /tmp/omcp-menu.sh
-```
-
-Choose **IPv4 Mode** or **Non-IPv4 Mode**, then select **[5] Update OMCP**. The updater downloads the latest panel code from the GitHub `main` branch, validates it, makes a rollback backup of `/opt/omcp`, replaces the application files and restarts the OMCP agent. It does not delete or overwrite `/var/lib/omcp`, so Minecraft servers, worlds, plugins, backups, users and configuration remain in place.
-
-You can also run the updater directly:
-
-```bash
-curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/update-omcp.sh" -o /tmp/update-omcp.sh && sudo bash /tmp/update-omcp.sh
-```
-
+> **Note:** This installer targets Ubuntu/Debian systems. Use a persistent VPS for a panel that should stay online. Temporary cloud-shell sessions can stop or lose their files when the session ends.
 
 ## ✨ What is OMCP?
 

@@ -456,10 +456,6 @@ def install_modrinth(sid, project_id, version_id, kind="mod"):
 def password_ok(password, record):
     import base64, hashlib
     try:
-        # Panel users store the hash under "password"; SFTP stores the
-        # same hash fields directly. Accept both record shapes.
-        if isinstance(record.get("password"),dict):
-            record=record["password"]
         salt=base64.b64decode(record["salt"])
         expected=base64.b64decode(record["hash"])
         actual=hashlib.pbkdf2_hmac("sha256",password.encode(),salt,int(record["iterations"]))
@@ -1538,33 +1534,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urlparse(self.path).path
         if path=="/api/health": return send(self,200,{"ok":True,"name":"OMCP"})
-        if path=="/api/setup/status":
-            users=load_users(); legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
-            return send(self,200,{"setupRequired":len(users)==0 or legacy is not None,"passwordSetupRequired":len(users)>0 and legacy is not None,"setupUsername":legacy,"accountCount":len(users)})
+        if path=="/api/setup/status": return send(self,200,{"setupRequired":len(load_users())==0,"accountCount":len(load_users())})
         if path=="/" or path=="/index.html":
             try: return send(self,200,WEB.read_bytes(),"text/html; charset=utf-8")
             except Exception: return send(self,404,{"error":"UI file missing"})
-        if path in ("/admin","/admin/","/admin/index.html","/admin.css","/admin.js"):
-            # Static shell only; all private data and actions remain behind authenticated admin APIs.
-            rel="index.html" if path in ("/admin","/admin/","/admin/index.html") else path.lstrip("/")
-            target=(WEB.parent/"admin"/rel).resolve()
-            if target.parent!=(WEB.parent/"admin").resolve() or not target.is_file(): return send(self,404,{"error":"Admin workspace asset missing"})
-            mime="text/html; charset=utf-8" if rel.endswith(".html") else "text/css; charset=utf-8" if rel.endswith(".css") else "application/javascript; charset=utf-8"
-            return send(self,200,target.read_bytes(),mime)
         if not self.auth(): return send(self,401,{"error":"Admin key required"})
         try:
             if path=="/api/users":
                 if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
-                return send(self,200,{"users":[{"username":u,"email":v.get("email",""),"role":v.get("role","user")} for u,v in load_users().items()]})
-            if path=="/api/admin/metadata":
-                if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
-                f=ROOT/"admin-metadata.json"
-                data=json.loads(f.read_text()) if f.exists() else {"nodes":[],"locations":[],"settings":{}}
-                return send(self,200,data)
+                return send(self,200,{"users":[{"username":u,"role":v.get("role","user")} for u,v in load_users().items()]})
             if path=="/api/me":
                 u=load_users().get(self.username)
                 if not u: return send(self,401,{"error":"Account no longer exists"})
-                return send(self,200,{"user":{"username":self.username,"email":u.get("email",""),"role":u.get("role","user")}})
+                return send(self,200,{"user":{"username":self.username,"role":u.get("role","user")}})
             if path=="/api/servers": return send(self,200,{"servers":servers()})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/mods/search",path)
             if x:
@@ -1697,32 +1679,21 @@ class Handler(BaseHTTPRequestHandler):
         path=urlparse(self.path).path
         if path in ("/api/setup","/api/login"):
             try:
-                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password","")); email=str(d.get("email","")).strip().lower()
+                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
                 users=load_users()
                 if path=="/api/setup":
-                    if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
-                    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
-                    if users:
-                        legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
-                        if not legacy: return send(self,409,{"error":"Admin account already exists"})
-                        if username and username.casefold()!=legacy.casefold(): return send(self,400,{"error":"Use the existing admin username to secure this account"})
-                        username=legacy
-                    else:
-                        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
-                        username=username.lower()
-                    if any(u.casefold()!=username.casefold() and r.get("email","").casefold()==email for u,r in users.items()): return send(self,409,{"error":"Email address is already in use"})
-                    users[username]={"role":"admin","created":int(time.time()),"email":email,"password":password_hash(password)}
+                    if users: return send(self,409,{"error":"Admin account already exists"})
+                    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
+                    users[username]={"role":"admin","created":int(time.time()),"passwordless_admin":True}
                     save_users(users)
                 else:
-                    login_id=username.strip().casefold()
-                    canonical=next((u for u,r in users.items() if str(u).strip().casefold()==login_id or str(r.get("email") or "").strip().casefold()==login_id),None)
+                    canonical=next((u for u in users if u.strip().casefold()==username.strip().casefold()),None)
                     record=users.get(canonical) if canonical else None
-                    if not record:
-                        return send(self,401,{"field":"username","error":"Username or email address was not found."})
-                    if not record.get("password") or not password_ok(password,record):
-                        return send(self,401,{"field":"password","error":"Incorrect password."})
+                    if not record: return send(self,401,{"error":"Unknown username. Check that this is the same VPS/data folder where your admin account was created."})
+                    if record.get("role")!="admin" and not password_ok(password,record):
+                        return send(self,401,{"error":"Incorrect username or password."})
                     username=canonical
-                return send(self,200,{"token":new_session(username),"user":{"username":username,"email":users[username].get("email",""),"role":users[username]["role"]}})
+                return send(self,200,{"token":new_session(username),"user":{"username":username,"role":users[username]["role"]}})
             except Exception as e: return send(self,400,{"error":str(e)})
         if path=="/api/logout":
             header=self.headers.get("Authorization","")
@@ -1730,78 +1701,18 @@ class Handler(BaseHTTPRequestHandler):
                 with SESSION_LOCK: SESSIONS.pop(header[7:],None)
             return send(self,200,{"ok":True})
         if not self.auth(): return send(self,401,{"error":"Login required"})
-        if path=="/api/account/update":
-            try:
-                d=body(self); old_username=self.username; username=str(d.get("username","")).strip(); email=str(d.get("email","")).strip().lower(); current_password=str(d.get("currentPassword","")); new_password=str(d.get("newPassword",""))
-                users=load_users(); record=users.get(old_username)
-                if not record or not record.get("password") or not password_ok(current_password,record): return send(self,401,{"error":"Enter your current password to confirm these changes"})
-                if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
-                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
-                canonical=username.lower()
-                if any(u.casefold()==canonical.casefold() and u!=old_username for u in users): return send(self,409,{"error":"Username already exists"})
-                if any(u!=old_username and v.get("email","").casefold()==email for u,v in users.items()): return send(self,409,{"error":"Email address is already in use"})
-                if new_password and (len(new_password)<10 or len(new_password)>128): raise ValueError("New password must be 10-128 characters")
-                record["email"]=email
-                if new_password: record["password"]=password_hash(new_password)
-                if canonical!=old_username:
-                    users.pop(old_username); users[canonical]=record
-                    with SESSION_LOCK:
-                        for item in SESSIONS.values():
-                            if item["username"]==old_username: item["username"]=canonical
-                    self.username=canonical
-                save_users(users)
-                return send(self,200,{"user":{"username":canonical,"email":email,"role":record.get("role","user")}})
-            except Exception as e: return send(self,400,{"error":str(e)})
-        if path=="/api/admin/metadata":
-            try:
-                if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
-                d=body(self); key=str(d.get("key","")); value=d.get("value")
-                if key not in ("nodes","locations","settings"): raise ValueError("Invalid admin metadata key")
-                f=ROOT/"admin-metadata.json"; data=json.loads(f.read_text()) if f.exists() else {"nodes":[],"locations":[],"settings":{}}
-                if key in ("nodes","locations") and not isinstance(value,list): raise ValueError("Expected a list")
-                if key=="settings" and not isinstance(value,dict): raise ValueError("Expected settings object")
-                data[key]=value; atomic_json(f,data); os.chmod(f,0o600)
-                return send(self,200,{"saved":True,"data":data})
-            except Exception as e: return send(self,400,{"error":str(e)})
-        if path=="/api/admin/users/update":
-            try:
-                if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
-                d=body(self); old=str(d.get("username","")).strip(); users=load_users(); record=users.get(old)
-                if not record: raise ValueError("User not found")
-                username=str(d.get("newUsername",old)).strip().lower(); email=str(d.get("email",record.get("email",""))).strip().lower(); role=str(d.get("role",record.get("role","user")))
-                if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Invalid username")
-                if role not in ("admin","user"): raise ValueError("Invalid role")
-                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
-                if any(k!=old and k.casefold()==username.casefold() for k in users): raise ValueError("Username already exists")
-                if any(k!=old and v.get("email","").casefold()==email for k,v in users.items()): raise ValueError("Email already in use")
-                if record.get("role")=="admin" and role!="admin" and sum(1 for v in users.values() if v.get("role")=="admin")<=1: raise ValueError("Cannot demote the last administrator")
-                password=str(d.get("password",""))
-                if password and not 10<=len(password)<=128: raise ValueError("Password must be 10-128 characters")
-                record["email"]=email; record["role"]=role
-                if password: record["password"]=password_hash(password)
-                if username!=old:
-                    users.pop(old); users[username]=record
-                    with SESSION_LOCK:
-                        for session in SESSIONS.values():
-                            if session["username"]==old: session["username"]=username
-                    if self.username==old: self.username=username
-                save_users(users)
-                return send(self,200,{"user":{"username":username,"email":email,"role":role}})
-            except Exception as e: return send(self,400,{"error":str(e)})
         if path=="/api/users":
             try:
                 if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
-                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password","")); email=str(d.get("email","")).strip().lower()
+                d=body(self); username=str(d.get("username","")).strip(); password=str(d.get("password",""))
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{3,24}",username): raise ValueError("Username must be 3-24 characters: letters, numbers, dot, _ or -")
                 if len(password)<10 or len(password)>128: raise ValueError("Password must be 10-128 characters")
-                if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email): raise ValueError("Enter a valid email address")
                 users=load_users()
                 if any(u.casefold()==username.casefold() for u in users): return send(self,409,{"error":"Username already exists"})
-                if any(r.get("email","").casefold()==email for r in users.values()): return send(self,409,{"error":"Email address is already in use"})
                 username=username.lower()
-                users[username]={"password":password_hash(password),"role":"user","created":int(time.time()),"email":email}
+                users[username]={"password":password_hash(password),"role":"user","created":int(time.time())}
                 save_users(users)
-                return send(self,201,{"user":{"username":username,"email":email,"role":"user"}})
+                return send(self,201,{"user":{"username":username,"role":"user"}})
             except Exception as e: return send(self,400,{"error":str(e)})
         try:
             d=body(self)

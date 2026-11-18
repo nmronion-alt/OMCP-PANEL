@@ -4,17 +4,10 @@ set -Eeuo pipefail
 REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
-MODE="${OMCP_INSTALL_MODE:-nonipv4}"
-if [[ "$MODE" != "ipv4" && "$MODE" != "nonipv4" ]]; then echo "Invalid OMCP install mode."; exit 1; fi
 if [[ "${EUID}" -ne 0 ]]; then echo "Run with sudo/root: sudo bash install-omcp.sh"; exit 1; fi
 if ! command -v apt-get >/dev/null; then echo "Supported target: Ubuntu/Debian."; exit 1; fi
-if [[ "$MODE" == "nonipv4" && -L /etc/nginx/sites-enabled/omcp ]]; then
-  rm -f /etc/nginx/sites-enabled/omcp
-  if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || true; fi
-fi
 apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless
-if [[ "$MODE" == "nonipv4" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-client; fi
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-paramiko git curl ca-certificates openjdk-21-jre-headless openssh-client
 DEBIAN_FRONTEND=noninteractive apt-get install -y cpulimit >/dev/null 2>&1 || true
 # Install Java 25 when the configured Ubuntu/Debian repositories provide it; Java 21 remains the baseline.
 if apt-cache show openjdk-25-jre-headless >/dev/null 2>&1; then
@@ -29,20 +22,14 @@ install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
 curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py.new"
 curl -fsSL "$REPO/index.html" -o "$APP/index.html.new"
-install -d -o root -g omcp -m 0750 "$APP/admin"
-for asset in index.html admin.css admin.js admin.ts; do
-  curl -fsSL "$REPO/admin/$asset" -o "$APP/admin/$asset.new"
-done
-# Publish only fully downloaded files; retain the existing user/server data directory untouched.
+# Publish only fully downloaded files.
 mv "$APP/omcp_agent.py.new" "$APP/omcp_agent.py"
 mv "$APP/index.html.new" "$APP/index.html"
-for asset in index.html admin.css admin.js admin.ts; do mv "$APP/admin/$asset.new" "$APP/admin/$asset"; done
 # Validate the complete agent source before stopping/restarting the existing process.
 python3 -m py_compile "$APP/omcp_agent.py"
-chown root:omcp "$APP/omcp_agent.py" "$APP/index.html" "$APP/admin/"*
-chmod 0640 "$APP/omcp_agent.py" "$APP/index.html" "$APP/admin/"*
+chown root:omcp "$APP/omcp_agent.py" "$APP/index.html"
+chmod 0640 "$APP/omcp_agent.py" "$APP/index.html"
 
-if [[ "$MODE" == "nonipv4" ]]; then
 # Keep one SSH identity so tunnl.gg can return the same free stable URL after reconnects.
 install -d -o omcp -g omcp -m 0700 "$DATA/.ssh"
 if [[ ! -s "$DATA/.ssh/id_ed25519" ]]; then
@@ -52,48 +39,17 @@ cat >"$APP/run-tunnel.sh" <<'TUNNEL'
 #!/usr/bin/env bash
 set +e
 while true; do
-  /usr/bin/ssh -n -T -i /var/lib/omcp/.ssh/id_ed25519 \
-    -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+  /usr/bin/ssh -i /var/lib/omcp/.ssh/id_ed25519 \
+    -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
     -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-    -o ExitOnForwardFailure=yes -R 80:localhost:8765 \
-    stable@proxy.tunnl.gg output=json 2>&1 | /usr/bin/tee -a /var/lib/omcp/tunnl.log | while IFS= read -r line; do
-      url="$(printf '%s' "$line" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("url","") if d.get("event")=="tunnel" else "")' 2>/dev/null || true)"
-      if [[ "$url" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then
-        printf '%s\n' "$url" >/var/lib/omcp/panel-url.tmp
-        chmod 0640 /var/lib/omcp/panel-url.tmp
-        mv /var/lib/omcp/panel-url.tmp /var/lib/omcp/panel-url
-      fi
-    done
+    -o ExitOnForwardFailure=yes -t -R 80:localhost:8765 \
+    stable@proxy.tunnl.gg 2>&1 | /usr/bin/tee -a /var/lib/omcp/tunnl.log
   sleep 5
 done
 TUNNEL
 chmod 0750 "$APP/run-tunnel.sh"
 chown root:omcp "$APP/run-tunnel.sh"
 
-fi
-
-# Ask for the first administrator during an interactive install. Existing accounts are never overwritten.
-configure_first_admin() {
-  local status required existing username email password confirm payload response
-  status=""; for _ in {1..20}; do status="$(curl -fsS --max-time 5 http://127.0.0.1:8765/api/setup/status 2>/dev/null || true)"; [[ -n "$status" ]] && break; sleep 1; done
-  required="$(printf '%s' "$status" | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("setupRequired") else "no")' 2>/dev/null || echo no)"
-  if [[ "$required" != "yes" ]]; then echo "Existing administrator account detected; keeping current credentials."; return 0; fi
-  if [[ ! -r /dev/tty ]]; then echo "No interactive terminal detected. Complete first-admin setup from the OMCP setup page."; return 0; fi
-  existing="$(printf '%s' "$status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("setupUsername") or "")' 2>/dev/null || true)"
-  echo
-  echo "===== OMCP FIRST ADMIN SETUP ====="
-  if [[ -n "$existing" ]]; then username="$existing"; echo "Securing existing legacy admin: $username"; else read -r -p "Admin username: " username </dev/tty; fi
-  read -r -p "Admin email: " email </dev/tty
-  read -r -p "Admin password (10-128 characters, visible): " password </dev/tty
-  read -r -p "Confirm admin password (visible): " confirm </dev/tty
-  if [[ "$password" != "$confirm" ]]; then echo "Passwords did not match. Complete setup from the OMCP setup page."; unset password confirm; return 0; fi
-  payload="$(OMCP_SETUP_USERNAME="$username" OMCP_SETUP_EMAIL="$email" OMCP_SETUP_PASSWORD="$password" python3 -c 'import json,os; print(json.dumps({"username":os.environ["OMCP_SETUP_USERNAME"],"email":os.environ["OMCP_SETUP_EMAIL"],"password":os.environ["OMCP_SETUP_PASSWORD"]}))')"
-  response="$(printf '%s' "$payload" | curl -fsS --max-time 15 -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8765/api/setup 2>&1)" || { echo "Admin setup failed: $response"; unset password confirm payload; return 0; }
-  printf '%s' "$response" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("Administrator created: "+d["user"]["username"] if d.get("user") else "Administrator setup completed")'
-  unset password confirm payload response
-}
-
-rm -f "$DATA/panel-url.tmp" "$DATA/panel-url"
 SYSTEMD_STATE=""
 SYSTEMD_OK=0
 if command -v systemctl >/dev/null 2>&1; then
@@ -135,9 +91,6 @@ UNIT
   systemctl daemon-reload
   systemctl enable omcp
   if systemctl is-active --quiet omcp; then systemctl restart omcp; else systemctl start omcp; fi
-  sleep 2
-  configure_first_admin
-  if [[ "$MODE" == "nonipv4" ]]; then
   cat >/etc/systemd/system/omcp-tunnel.service <<'TUNNEL'
 [Unit]
 Description=OMCP stable HTTPS tunnel via tunnl.gg
@@ -160,20 +113,12 @@ UMask=0027
 WantedBy=multi-user.target
 TUNNEL
   systemctl daemon-reload
-  systemctl enable omcp-tunnel.service
-  if systemctl is-active --quiet omcp-tunnel.service; then
-    systemctl restart omcp-tunnel.service
-  else
-    systemctl start omcp-tunnel.service
-  fi
+  systemctl enable --now omcp-tunnel.service
   sleep 2
-  else
-    systemctl disable --now omcp-tunnel.service 2>/dev/null || true
-  fi
   echo "OMCP service status:"
   systemctl --no-pager --full status omcp || true
   echo "First-run Admin setup: sudo journalctl -u omcp -n 80 --no-pager"
-  if [[ "$MODE" == "nonipv4" ]]; then echo "Tunnel URL/log: sudo tail -n 40 /var/lib/omcp/tunnl.log"; fi
+  echo "Tunnel URL/log: sudo tail -n 40 /var/lib/omcp/tunnl.log"
 else
   echo "systemd is not usable (state: ${SYSTEMD_STATE:-unavailable}); using background-process mode."
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
@@ -187,62 +132,25 @@ else
   sleep 2
   if [[ -f "$DATA/agent.pid" ]] && kill -0 "$(cat "$DATA/agent.pid")" 2>/dev/null; then
     echo "OMCP background process started (PID $(cat "$DATA/agent.pid"))."
-    configure_first_admin
   else
     echo "OMCP did not start. Recent log:"
     tail -n 60 "$DATA/agent.log" 2>/dev/null || true
     exit 1
   fi
   echo "First-run Admin setup / startup log: sudo cat $DATA/agent.log"
-  if [[ "$MODE" == "nonipv4" ]]; then
-    if [[ -f "$DATA/tunnel.pid" ]] && kill -0 "$(cat "$DATA/tunnel.pid")" 2>/dev/null; then kill "$(cat "$DATA/tunnel.pid")" 2>/dev/null || true; fi
-    runuser -u omcp -- sh -c 'nohup /opt/omcp/run-tunnel.sh </dev/null >/dev/null 2>&1 & echo $! >/var/lib/omcp/tunnel.pid'
-    sleep 3
-    echo "tunnl.gg URL/log: sudo tail -n 40 $DATA/tunnl.log"
-    echo "Stop this no-systemd tunnel: sudo kill \$(cat $DATA/tunnel.pid)"
-  else
-    if [[ -f "$DATA/tunnel.pid" ]] && kill -0 "$(cat "$DATA/tunnel.pid")" 2>/dev/null; then kill "$(cat "$DATA/tunnel.pid")" 2>/dev/null || true; fi
-    rm -f "$DATA/tunnel.pid"
+  if [[ -f "$DATA/tunnel.pid" ]] && kill -0 "$(cat "$DATA/tunnel.pid")" 2>/dev/null; then
+    kill "$(cat "$DATA/tunnel.pid")" 2>/dev/null || true
   fi
+  runuser -u omcp -- sh -c 'nohup /opt/omcp/run-tunnel.sh </dev/null >/dev/null 2>&1 & echo $! >/var/lib/omcp/tunnel.pid'
+  sleep 3
+  echo "tunnl.gg URL/log: sudo tail -n 40 $DATA/tunnl.log"
+  echo "Stop this no-systemd tunnel: sudo kill \$(cat $DATA/tunnel.pid)"
   echo "Stop this no-systemd panel: sudo kill \$(cat $DATA/agent.pid)"
 fi
 echo
 echo "OMCP panel listener: http://127.0.0.1:8765"
-if [[ "$MODE" == "nonipv4" ]]; then echo "Panel is bound to localhost. tunnl.gg HTTPS tunnel reconnects automatically using a persistent SSH identity."; else echo "IPv4 mode selected. No panel tunnel is started."; fi
+echo "Panel is bound to localhost. tunnl.gg HTTPS tunnel reconnects automatically using a persistent SSH identity."
 echo "OpenJDK 21 was installed. Verify with: java -version"
 echo "Cloud Shell sessions are temporary; processes and files may be lost when the session ends."
-if [[ "$MODE" == "nonipv4" ]]; then echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL."; fi 
-if [[ "$MODE" == "nonipv4" ]]; then echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."; fi
-
-echo
-if [[ "$MODE" == "ipv4" ]]; then
-  echo "IPv4 mode: panel URL will be configured by the installer menu."
-else
-echo "Waiting for the OMCP HTTPS URL (up to 90 seconds)..."
-PANEL_URL=""
-for _ in {1..120}; do
-  if [[ -s "$DATA/panel-url" ]]; then
-    PANEL_URL="$(tr -d '\r\n' <"$DATA/panel-url")"
-    if [[ "$PANEL_URL" =~ ^https://[A-Za-z0-9.-]+\.tunnl\.gg$ ]]; then break; fi
-    PANEL_URL=""
-  fi
-  sleep 1
-done
-if [[ -n "$PANEL_URL" ]]; then
-  echo "=================================================="
-  echo "OMCP PANEL URL: $PANEL_URL"
-  echo "=================================================="
-else
-  echo "ERROR: OMCP installed, but no public tunnel URL was received."
-  echo "Check: sudo tail -n 80 /var/lib/omcp/tunnl.log"
-  echo "Check API: curl -sS http://127.0.0.1:8765/api/health"
-  if [[ -f /etc/systemd/system/omcp-tunnel.service ]]; then
-    echo "Tunnel service: sudo systemctl status omcp-tunnel --no-pager"
-  else
-    echo "Tunnel process: sudo ps -ef | grep '[s]sh.*proxy.tunnl.gg'"
-  fi
-  exit 1
-fi
-
-
-fi
+echo "Free tunnl.gg links have a 2-hour idle timeout and a 24-hour maximum session; automatic reconnect reuses the same SSH-key URL." 
+echo "This tunnel is for the panel's HTTPS URL only; Minecraft servers still need a separate TCP relay."
