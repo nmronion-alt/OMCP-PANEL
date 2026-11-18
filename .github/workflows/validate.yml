@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Check installer and uninstaller shell syntax
+        run: bash -n omcp-menu.sh install-omcp.sh update-omcp.sh uninstall-omcp.sh
       - name: Compile Python agent
         run: python -m py_compile agent/omcp_agent.py
       - name: Extract and check panel JavaScript
@@ -30,3 +32,7 @@ jobs:
           Path("/tmp/omcp-panel.js").write_text("\n".join(scripts), encoding="utf-8")
           PY
           node --check /tmp/omcp-panel.js
+      - name: Check standalone admin JavaScript
+        run: node --check admin/admin.js
+      - name: Type-check admin workspace source
+        run: npx --yes --package typescript tsc --noEmit --target ES2022 --lib ES2022,DOM admin/admin.ts
