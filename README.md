@@ -27,6 +27,18 @@ curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronio
 
 The installer opens an interactive IPv4 / Non-IPv4 menu. Non-IPv4 installation waits for a valid tunnl.gg HTTPS URL and exits with an error if no public URL is received. IPv4 mode uses a direct reverse proxy; a domain can receive HTTPS through Let's Encrypt, while IP-only access uses HTTP.
 
+### 🧪 Test the current admin development build (Ubuntu/Debian VPS)
+
+This installs the **feature/admin-panel-restructure** branch so you can test the current admin work without merging it into `main`. It uses the same installer and keeps existing OMCP data under `/var/lib/omcp`.
+
+```bash
+curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/feature/admin-panel-restructure/omcp-menu.sh" -o /tmp/omcp-menu-test.sh && sudo env OMCP_REPO_REF=feature/admin-panel-restructure bash /tmp/omcp-menu-test.sh
+```
+
+To update this test installation later, open the same menu command and choose **Update OMCP**. The selected branch is retained for installer/update downloads in that session.
+
+> This is a development build. Connector pairing and the extension runtime are not yet complete; do not use it as a production control plane.
+
 ## 🔄 Update an existing VPS
 
 Open the latest menu (the menu is downloaded fresh from GitHub each time):
