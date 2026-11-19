@@ -525,7 +525,7 @@ def servers():
     for p in SERVERS.iterdir():
         if p.is_dir() and re.fullmatch(r"[a-f0-9]{8}",p.name) and (p/"omcp.json").exists():
             m=json.loads((p/"omcp.json").read_text())
-            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"cpuLimit":m.get("cpuLimit",0),"port":m["port"],"status":"running" if server_running(p.name) else "stopped"})
+            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"cpuLimit":m.get("cpuLimit",0),"port":m["port"],"owner":m.get("owner",""),"status":"running" if server_running(p.name) else "stopped"})
     return out
 
 def physical_ram_gb():
@@ -538,7 +538,7 @@ def physical_ram_gb():
 
 def create(d):
     name=str(d.get('name','')).strip(); ver=str(d.get('version','')).strip(); software=str(d.get('software','paper')).lower()
-    mem=int(d.get('memory',2)); cpu_limit=int(d.get('cpuLimit',0)); port=int(d.get('port',25565))
+    mem=int(d.get('memory',2)); cpu_limit=int(d.get('cpuLimit',0)); port=int(d.get('port',25565)); owner=str(d.get('owner','')).strip().lower()
     supported=('paper','purpur','folia','spigot','velocity','waterfall','fabric','vanilla')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{1,23}',name): raise ValueError('Name must be 2-24 letters, numbers, _ or -')
     if not re.fullmatch(r'\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?:-[A-Za-z0-9.-]+)?',ver): raise ValueError('Invalid Minecraft or proxy software version')
@@ -548,12 +548,13 @@ def create(d):
     if not d.get('eulaAccepted'): raise ValueError('Accept the Minecraft EULA first')
     if not shutil.which('java'): raise ValueError('Java runtime not found')
     if any(s['name'].lower()==name.lower() or s['port']==port for s in servers()): raise ValueError('Name or port already used')
+    if owner and owner not in load_users(): raise ValueError('Selected server owner does not exist')
     sid=secrets.token_hex(4); folder=safe_dir(sid); folder.mkdir(mode=0o750)
     try:
         download_server_jar(software,ver,folder/'server.jar')
         if software not in ('velocity','waterfall'): (folder/'eula.txt').write_text('eula=true\n')
         if software not in ('velocity','waterfall'): (folder/'server.properties').write_text('server-port='+str(port)+'\n')
-        (folder/'omcp.json').write_text(json.dumps({'name':name,'version':ver,'software':software,'memory':mem,'cpuLimit':cpu_limit,'port':port,'serverType':'proxy' if software in ('velocity','waterfall') else 'game'},indent=2))
+        (folder/'omcp.json').write_text(json.dumps({'name':name,'version':ver,'software':software,'memory':mem,'cpuLimit':cpu_limit,'port':port,'owner':owner,'serverType':'proxy' if software in ('velocity','waterfall') else 'game'},indent=2))
         return next(s for s in servers() if s['id']==sid)
     except Exception:
         shutil.rmtree(folder,ignore_errors=True)
@@ -1832,7 +1833,16 @@ class Handler(BaseHTTPRequestHandler):
                 schedules[sid]={"enabled":enabled,"interval_minutes":interval,"provider":provider,"last_run":old.get("last_run",0),"last_status":old.get("last_status","Not run yet"),"last_file_id":old.get("last_file_id","")}
                 save_backup_config(cfg)
                 return send(self,200,{"saved":True,"schedule":schedules[sid],"driveConfigured":google_drive_configured(cfg)})
-            if path=="/api/servers": return send(self,201,{"server":create(d)})
+            if path=="/api/servers":
+                try:
+                    record=load_users().get(self.username,{})
+                    if record.get("role")!="admin": d["owner"]=self.username
+                    else:
+                        requested=str(d.get("owner","")).strip().lower()
+                        if requested and requested not in load_users(): raise ValueError("Selected server owner does not exist")
+                        d["owner"]=requested
+                    return send(self,201,{"server":create(d)})
+                except Exception as e: return send(self,400,{"error":str(e)})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/properties",path)
             if x: return send(self,200,{"saved":True,"properties":write_server_properties(x.group(1),d.get("properties",{})),"apply":"restart"})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/archive",path)
