@@ -237,10 +237,13 @@ NGINX
   echo "=================================================="
 }
 run_install(){
-  local mode="$1" host email script
+  local mode="$1" host email script public_ip
   if [[ "$mode" == "ipv4" ]]; then
-    read -r -p "Panel public IPv4 or custom domain: " host
-    if [[ -z "$host" ]]; then echo "A public IP or domain is required."; return; fi
+    public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org)" || { echo "ERROR: Could not auto-detect this VPS public IPv4."; return 1; }
+    if [[ ! "$public_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then echo "ERROR: Invalid public IPv4 response: $public_ip"; return 1; fi
+    echo "Automatically detected VPS public IPv4: $public_ip"
+    read -r -p "Panel domain (leave blank to use detected IPv4): " host
+    host="${host:-$public_ip}"
     validate_ipv4_target "$host" || return 1
     if [[ "$host" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
       read -r -p "Email for HTTPS certificate: " email
