@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
+OMCP_REPO_REF="${OMCP_REPO_REF:-main}"
+REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/${OMCP_REPO_REF}"
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
 BACKUP_ROOT="/var/backups/omcp"
