@@ -58,7 +58,7 @@ def public_ipv4():
 
 def minecraft_host():
     net=network_config()
-    configured=str((net.get("minecraft") or {}).get("host","")).strip()
+    configured=str((net.get("minecraft") or {}).get("host") or (net.get("minecraft") or {}).get("domain") or "").strip()
     if configured: return configured
     dep=deployment_config()
     for value in (dep.get("minecraft_host"),dep.get("panel_host"),dep.get("public_ipv4")):
