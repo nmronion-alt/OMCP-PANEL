@@ -227,29 +227,14 @@ function applyTheme(){
   document.documentElement.style.setProperty("--side-alpha",String(Number(sideOpacity)/100));document.documentElement.style.setProperty("--card-alpha",String(Number(cardOpacity)/100));
   if(!bg.startsWith("https://"))bg="";
   document.documentElement.style.setProperty("--purple",accent);
-  const fallback="radial-gradient(ellipse at 80% 0,#28163d,transparent 42%),var(--bg)";document.body.style.background=fallback;
+  const fallback="radial-gradient(ellipse at 80% 0,#28163d,transparent 42%),var(--bg)";
+  document.body.style.background=fallback;
   const video=$("panelBgVideo"),isVideo=/\.(mp4|webm|ogg)(?:[?#].*)?$/i.test(bg);
   if(video){if(isVideo){if(video.src!==bg){video.src=bg;video.load()}video.classList.add("active");video.play().catch(()=>{})}else{video.pause();video.removeAttribute("src");video.load();video.classList.remove("active")}}
-  if(bg&&!isVideo){const probe=new Image();probe.onload=()=>{document.body.style.background='linear-gradient(180deg,rgba(24,8,39,.10),rgba(24,8,39,.22)),url("'+bg.replace(/["\\\\()]/g,"")+'") center/cover fixed'};probe.onerror=()=>{document.body.style.background=fallback;console.warn("OMCP background image could not be loaded:",bg)};probe.src=bg}
+  if(bg&&!isVideo){const probe=new Image();probe.onload=()=>{document.body.style.background='linear-gradient(180deg,rgba(24,8,39,.10),rgba(24,8,39,.22)),url("'+bg.replace(/["\\()]/g,"")+'") center/cover fixed'};probe.onerror=()=>{document.body.style.background=fallback;console.warn("OMCP background image could not be loaded:",bg)};probe.src=bg}
   if($("bgImage"))$("bgImage").value=bg||defaultBg;if($("accentColor"))$("accentColor").value=accent;if($("sideOpacity"))$("sideOpacity").value=sideOpacity;if($("cardOpacity"))$("cardOpacity").value=cardOpacity;if($("sideOpacityValue"))$("sideOpacityValue").textContent=sideOpacity+"%";if($("cardOpacityValue"))$("cardOpacityValue").textContent=cardOpacity+"%";
  }
- if(!bg) bg=defaultBg;
- let accent=localStorage.getItem("omcp-accent")||"#b88cff",sideOpacity=localStorage.getItem("omcp-side-opacity")||"76",cardOpacity=localStorage.getItem("omcp-card-opacity")||"62";
- document.documentElement.style.setProperty("--side-alpha",String(Number(sideOpacity)/100));
- document.documentElement.style.setProperty("--card-alpha",String(Number(cardOpacity)/100));
- if(bg&&!bg.startsWith("https://")) bg="";
- document.documentElement.style.setProperty("--purple",accent);
- const fallback="radial-gradient(ellipse at 80% 0,#28163d,transparent 42%),var(--bg)";
- document.body.style.background=fallback;
- if(bg){const probe=new Image();probe.onload=()=>{document.body.style.background='linear-gradient(180deg,rgba(24,8,39,.10),rgba(24,8,39,.22)),url("'+bg.replace(/["\\()]/g,"") + '") center/cover fixed'};probe.onerror=()=>{document.body.style.background=fallback;console.warn("OMCP background image could not be loaded:",bg)};probe.src=bg}
- if($("bgImage")) $("bgImage").value=bg||defaultBg;
- if($("accentColor")) $("accentColor").value=accent;
- if($("sideOpacity")) $("sideOpacity").value=sideOpacity;
- if($("cardOpacity")) $("cardOpacity").value=cardOpacity;
- if($("sideOpacityValue")) $("sideOpacityValue").textContent=sideOpacity+"%";
- if($("cardOpacityValue")) $("cardOpacityValue").textContent=cardOpacity+"%";
-}
-$("saveTheme").onclick=()=>{localStorage.setItem("omcp-bg",$("bgImage").value.trim());localStorage.setItem("omcp-accent",$("accentColor").value);localStorage.setItem("omcp-side-opacity",$("sideOpacity").value);localStorage.setItem("omcp-card-opacity",$("cardOpacity").value);applyTheme();$("themeMsg").textContent="Saved in this browser"};
+ $("saveTheme").onclick=()=>{localStorage.setItem("omcp-bg",$("bgImage").value.trim());localStorage.setItem("omcp-accent",$("accentColor").value);localStorage.setItem("omcp-side-opacity",$("sideOpacity").value);localStorage.setItem("omcp-card-opacity",$("cardOpacity").value);applyTheme();$("themeMsg").textContent="Saved in this browser"};
 function previewOpacity(){const a=$("sideOpacity").value,b=$("cardOpacity").value;document.documentElement.style.setProperty("--side-alpha",String(Number(a)/100));document.documentElement.style.setProperty("--card-alpha",String(Number(b)/100));if($("sideOpacityValue"))$("sideOpacityValue").textContent=a+"%";if($("cardOpacityValue"))$("cardOpacityValue").textContent=b+"%";}
 $("sideOpacity").oninput=previewOpacity;$("cardOpacity").oninput=previewOpacity;
 $("resetTheme").onclick=()=>{localStorage.setItem("omcp-bg","https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/assets/file_000000009df082118eb0547303d24b00.png");localStorage.removeItem("omcp-accent");localStorage.removeItem("omcp-side-opacity");localStorage.removeItem("omcp-card-opacity");applyTheme();$("themeMsg").textContent="Default background restored"};
