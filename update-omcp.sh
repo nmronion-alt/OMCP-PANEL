@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main"
+REPO=""
+COMMIT_SHA=""
 APP="/opt/omcp"
 DATA="/var/lib/omcp"
 BACKUP_ROOT="/var/backups/omcp"
@@ -21,6 +22,12 @@ id omcp >/dev/null 2>&1 || fail "The omcp service account is missing."
 command -v curl >/dev/null 2>&1 || fail "curl is required."
 command -v python3 >/dev/null 2>&1 || fail "python3 is required."
 
+say "Resolving the latest GitHub main commit..."
+COMMIT_SHA="$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 -H "Accept: application/vnd.github+json" "https://api.github.com/repos/nmronion-alt/OMCP-PANEL/commits/main" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')" || fail "Could not resolve the latest GitHub commit."
+[[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "GitHub returned an invalid commit SHA."
+REPO="https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/$COMMIT_SHA"
+say "Using immutable source commit $COMMIT_SHA."
+
 WORK="$(mktemp -d /tmp/omcp-update.XXXXXX)"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 BACKUP="$BACKUP_ROOT/$STAMP"
@@ -32,7 +39,7 @@ trap cleanup EXIT
 say "Downloading latest OMCP files from GitHub main..."
 download(){
   local path="$1" dest="$2"
-  curl -fL --retry 3 --retry-all-errors --connect-timeout 15 -H "Cache-Control: no-cache" "$REPO/$path?omcp_cachebust=$(date +%s%N)" -o "$dest"
+  curl -fL --retry 3 --retry-all-errors --connect-timeout 15 "$REPO/$path" -o "$dest"
 }
 download "agent/omcp_agent.py" "$WORK/omcp_agent.py"
 download "index.html" "$WORK/index.html"
