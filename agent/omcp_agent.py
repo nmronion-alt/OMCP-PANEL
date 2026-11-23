@@ -1625,6 +1625,11 @@ class Handler(BaseHTTPRequestHandler):
             return send(self,200,target.read_bytes(),mime)
         if not self.auth(): return send(self,401,{"error":"Admin key required"})
         try:
+            if path=="/api/panel/config":
+                f=ROOT/"admin-metadata.json"
+                data=json.loads(f.read_text()) if f.exists() else {"settings":{}}
+                settings=data.get("settings") if isinstance(data.get("settings"),dict) else {}
+                return send(self,200,{"panelName":str(settings.get("panelName") or "OMCP"),"logoUrl":str(settings.get("logoUrl") or ""),"serverLayout":settings.get("serverLayout") if isinstance(settings.get("serverLayout"),dict) else {}})
             if path=="/api/users":
                 if load_users().get(self.username,{}).get("role")!="admin": return send(self,403,{"error":"Admin permission required"})
                 return send(self,200,{"users":[{"username":u,"email":v.get("email",""),"role":v.get("role","user")} for u,v in load_users().items()]})
