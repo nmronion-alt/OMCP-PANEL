@@ -1485,7 +1485,7 @@ def extract_file_archive(sid, rel):
                 if not infos or len(infos)>100000: raise ValueError("ZIP is empty or contains too many entries")
                 total=0
                 for info in infos:
-                    raw=info.filename.replace("\\\\","/"); norm=posixpath.normpath(raw); mode=(info.external_attr>>16)&0o170000
+                    raw=info.filename.replace("\\","/"); norm=posixpath.normpath(raw); mode=(info.external_attr>>16)&0o170000
                     if raw.startswith("/") or norm in ("..",".") or norm.startswith("../") or ":" in norm.split("/")[0] or mode not in (0,stat.S_IFREG,stat.S_IFDIR): raise ValueError("Unsafe path or special file found in ZIP")
                     total+=info.file_size
                     if total>8*1024*1024*1024: raise ValueError("Archive expands beyond the 8 GB safety limit")
@@ -1496,7 +1496,7 @@ def extract_file_archive(sid, rel):
                 if not members or len(members)>100000: raise ValueError("TAR is empty or contains too many entries")
                 total=0
                 for m in members:
-                    raw=m.name.replace("\\\\","/"); norm=posixpath.normpath(raw)
+                    raw=m.name.replace("\\","/"); norm=posixpath.normpath(raw)
                     if raw.startswith("/") or norm in ("..",".") or norm.startswith("../") or ":" in norm.split("/")[0] or not (m.isdir() or m.isfile()): raise ValueError("Unsafe path, link or special file found in TAR")
                     if m.isfile():
                         total+=m.size
