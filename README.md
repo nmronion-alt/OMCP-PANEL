@@ -25,7 +25,7 @@ Run this command on a fresh Ubuntu/Debian VPS with root or `sudo` access:
 curl -fL --retry 3 --retry-all-errors "https://raw.githubusercontent.com/nmronion-alt/OMCP-PANEL/main/omcp-menu.sh" -o /tmp/omcp-menu.sh && sudo bash /tmp/omcp-menu.sh
 ```
 
-The installer opens an interactive IPv4 / Non-IPv4 menu. Non-IPv4 installation waits for a valid tunnl.gg HTTPS URL and exits with an error if no public URL is received. IPv4 mode uses a direct reverse proxy; a domain can receive HTTPS through Let's Encrypt, while IP-only access uses HTTP.
+The installer opens an interactive IPv4 / Non-IPv4 menu. In IPv4 mode, both the VPS public IPv4 and the configured panel domain are accepted by the reverse proxy; a domain can receive HTTPS through Let's Encrypt, while IP-only access uses HTTP. Minecraft connection addresses are generated from the configured domain or VPS IPv4 plus the port selected for each server. No port is entered in the Minecraft host setup.
 
 ## 🔄 Update an existing VPS
 
@@ -65,7 +65,7 @@ OMCP Agent on your VPS
     └── Backups & Network Routing
 ```
 
-The management API listens on `127.0.0.1:8765` by default. The installer provides the panel's remote HTTPS link through its tunnel.
+The management API listens on `127.0.0.1:8765` by default. IPv4 mode publishes it through the VPS reverse proxy using the public IP and configured domain; Non-IPv4 mode uses the selected tunnel provider.
 
 ## 🚀 Features
 
@@ -80,8 +80,8 @@ The management API listens on `127.0.0.1:8765` by default. The installer provide
 | 🧵 **Fabric Mods** | Browse Modrinth Fabric mods and modpacks, select compatible releases and install them |
 | 👥 **Players** | Read live status samples and manage ban, unban and operator records without sending console commands |
 | 💾 **Backups** | Create ZIP backups and schedule local VPS or Google Drive backups |
-| 🔐 **SFTP** | Generate SFTP credentials and create a dedicated Pinggy TCP host for remote file clients |
-| 🌐 **Network Routing** | Use the currently implemented Pinggy, Bore and Minekube Connect routes; provider availability depends on host/network setup |
+| 🔐 **SFTP** | Generate SFTP credentials; IPv4 mode uses the VPS public IPv4 directly, while Non-IPv4 mode uses a dedicated TCP tunnel |
+| 🌐 **Network Routing** | Non-IPv4 mode provides supported tunnel/relay controls; IPv4 mode uses direct VPS addressing and hides tunnel routing controls |
 | 📊 **Resource Information** | View host memory and CPU-thread information |
 | 👤 **Accounts** | Set up an admin account and sign in with protected password storage |
 
