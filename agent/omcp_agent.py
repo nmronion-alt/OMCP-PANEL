@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io, ipaddress
 try:
     import paramiko
 except ImportError:
@@ -13,6 +13,62 @@ SERVERS=ROOT/"servers"; CFGFILE=ROOT/"config.json"
 WEB=Path(os.environ.get("OMCP_WEB","/opt/omcp/index.html"))
 HOST=os.environ.get("OMCP_HOST","127.0.0.1"); PORT=int(os.environ.get("OMCP_PORT","8765"))
 ROOT.mkdir(parents=True,exist_ok=True); SERVERS.mkdir(parents=True,exist_ok=True)
+DEPLOYMENT_FILE=ROOT/"deployment.json"
+NETWORK_FILE=ROOT/"network.json"
+
+def read_config_file(path, default):
+    try:
+        data=json.loads(path.read_text())
+        return data if isinstance(data,dict) else default.copy()
+    except Exception:
+        return default.copy()
+
+def deployment_config():
+    data=read_config_file(DEPLOYMENT_FILE,{"mode":"nonipv4","panel_host":"","public_ipv4":""})
+    if not DEPLOYMENT_FILE.exists() and Path("/etc/nginx/sites-enabled/omcp").exists():
+        data["mode"]="ipv4"
+    return data
+
+def network_config():
+    return read_config_file(NETWORK_FILE,{"minecraft":{}})
+
+def ipv4_mode():
+    return str(deployment_config().get("mode","")).lower()=="ipv4"
+
+def public_ipv4():
+    data=deployment_config()
+    value=str(data.get("public_ipv4","")).strip()
+    try:
+        if ipaddress.ip_address(value).version==4: return value
+    except ValueError:
+        pass
+    panel_url=ROOT/"panel-url"
+    if panel_url.exists():
+        host=urlparse(panel_url.read_text().strip()).hostname or ""
+        try:
+            if ipaddress.ip_address(host).version==4: return host
+        except ValueError:
+            pass
+    try:
+        with urllib.request.urlopen("https://api.ipify.org",timeout=4) as response:
+            value=response.read(64).decode().strip()
+        return value if ipaddress.ip_address(value).version==4 else ""
+    except Exception:
+        return ""
+
+def minecraft_host():
+    net=network_config()
+    configured=str((net.get("minecraft") or {}).get("host") or (net.get("minecraft") or {}).get("domain") or "").strip()
+    if configured: return configured
+    dep=deployment_config()
+    for value in (dep.get("minecraft_host"),dep.get("panel_host"),dep.get("public_ipv4")):
+        value=str(value or "").strip()
+        if value: return value
+    return public_ipv4()
+
+def minecraft_address(port):
+    host=minecraft_host()
+    return (host+":"+str(int(port))) if host else ""
 USERSFILE=ROOT/"users.json"
 SESSIONS={}
 SESSION_LOCK=threading.RLock()
@@ -233,7 +289,11 @@ def start_sftp_pinggy():
 
 def sftp_info(sid):
     meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
-    t=globals().get("SFTP_TUNNELS",{}).get("main") or {}; return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":t.get("port") or SFTP_PORT,"host":t.get("host") or "Not generated","fingerprint":SFTP_STATE.get("fingerprint",""),"tunnelStatus":"running" if t.get("address") else ("starting" if t and t["proc"].poll() is None else "stopped")}
+    t=globals().get("SFTP_TUNNELS",{}).get("main") or {}
+    direct=ipv4_mode()
+    host=public_ipv4() if direct else (t.get("host") or "Not generated")
+    port=SFTP_PORT if direct else (t.get("port") or SFTP_PORT)
+    return {"available":SFTP_STATE.get("available",False),"status":SFTP_STATE.get("status","unavailable"),"error":SFTP_STATE.get("error",""),"enabled":bool(meta.get("sftp",{}).get("password_hash")),"username":"omcp-"+sid,"port":port,"host":host or ("Public IPv4 unavailable" if direct else "Not generated"),"fingerprint":SFTP_STATE.get("fingerprint",""),"tunnelStatus":"direct" if direct else ("running" if t.get("address") else ("starting" if t and t["proc"].poll() is None else "stopped"))}
 
 def reset_sftp_password(sid):
     if not SFTP_STATE.get("available"): raise ValueError(SFTP_STATE.get("error") or "SFTP service is not running")
@@ -241,7 +301,11 @@ def reset_sftp_password(sid):
     password=secrets.token_urlsafe(18)
     meta["sftp"]={"password_hash":password_hash(password),"created":int(time.time())}
     atomic_json(folder/"omcp.json",meta)
-    tunnel=start_sftp_pinggy(); return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":tunnel.get("port") or SFTP_PORT,"host":tunnel.get("host") or "Pending","tunnelStatus":tunnel.get("status"),"tunnelLogs":tunnel.get("logs",""),"fingerprint":SFTP_STATE.get("fingerprint","")}
+    if ipv4_mode():
+        host=public_ipv4()
+        if not host: raise ValueError("Could not detect the VPS public IPv4 for direct SFTP access.")
+        return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":SFTP_PORT,"host":host,"tunnelStatus":"direct","fingerprint":SFTP_STATE.get("fingerprint","")}
+    tunnel=start_sftp_pinggy(); return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":tunnel.get("port") or SFTP_PORT,"host":tunnel.get("host") or "Pending","tunnelStatus":tunnel.get("status"),"tunnelLogs":tunnel.get("logs",""),"fingerprint":SFTP_STATE.get("fingerprint","")
 
 
 def _mc_varint(n):
@@ -525,7 +589,7 @@ def servers():
     for p in SERVERS.iterdir():
         if p.is_dir() and re.fullmatch(r"[a-f0-9]{8}",p.name) and (p/"omcp.json").exists():
             m=json.loads((p/"omcp.json").read_text())
-            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"cpuLimit":m.get("cpuLimit",0),"port":m["port"],"status":"running" if server_running(p.name) else "stopped"})
+            out.append({"id":p.name,"name":m["name"],"version":m["version"],"software":m.get("software","paper"),"memory":m["memory"],"cpuLimit":m.get("cpuLimit",0),"port":m["port"],"address":minecraft_address(m["port"]),"status":"running" if server_running(p.name) else "stopped"})
     return out
 
 def physical_ram_gb():
@@ -881,6 +945,7 @@ def minekube_info(sid):
     return {"status":"running" if address and server_running(sid) else ("installed" if installed else "stopped"),"provider":"minekube","address":address,"installed":installed,"restartRequired":installed and not address and not server_running(sid),"logs":raw[-5000:] if raw else "Install the Connect plugin, then start/restart this server. Minekube will print its public address in the console."}
 
 def start_tunnel(sid, provider):
+    if ipv4_mode(): raise ValueError("Minecraft routing providers are disabled in IPv4 mode. Use the VPS public IP or configured domain with the server port.")
     folder=safe_dir(sid); meta=json.loads((folder/"omcp.json").read_text()); port=int(meta.get("port",25565))
     if provider=="minekube": return enable_minekube(sid, "")
     if provider not in ("pinggy","bore"): raise ValueError("Unknown routing provider")
@@ -952,6 +1017,10 @@ def start_tunnel(sid, provider):
     return {"status":"starting","provider":"pinggy","port":meta["port"],"address":entry["address"],"logs":"\n".join(entry["lines"][-20:])}
 
 def tunnel_info(sid):
+    if ipv4_mode():
+        meta=json.loads((safe_dir(sid)/"omcp.json").read_text())
+        address=minecraft_address(meta.get("port",25565))
+        return {"status":"direct","provider":"ipv4","address":address or None,"port":meta.get("port"),"logs":"Direct IPv4 mode. No Minecraft tunnel is required."}
     with TUNNEL_LOCK:
         entry=TUNNELS.get(sid)
         if entry:
@@ -1538,6 +1607,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=urlparse(self.path).path
         if path=="/api/health": return send(self,200,{"ok":True,"name":"OMCP"})
+        if path=="/api/network":
+            dep=deployment_config()
+            return send(self,200,{"mode":dep.get("mode","nonipv4"),"publicIPv4":public_ipv4(),"panelHost":dep.get("panel_host",""),"minecraftHost":minecraft_host(),"directSftp":ipv4_mode(),"routingEnabled":not ipv4_mode()})
         if path=="/api/setup/status":
             users=load_users(); legacy=next((u for u,r in users.items() if r.get("role")=="admin" and not r.get("password")),None)
             return send(self,200,{"setupRequired":len(users)==0 or legacy is not None,"passwordSetupRequired":len(users)>0 and legacy is not None,"setupUsername":legacy,"accountCount":len(users)})

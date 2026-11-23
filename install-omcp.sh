@@ -27,6 +27,16 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
 id omcp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --create-home --shell /usr/sbin/nologin omcp
 install -d -o root -g omcp -m 0750 "$APP"
 install -d -o omcp -g omcp -m 0750 "$DATA" "$DATA/servers" "$DATA/backups"
+OMCP_MODE="$MODE" OMCP_PANEL_HOST="${OMCP_PANEL_HOST:-}" OMCP_PUBLIC_IPV4="${OMCP_PUBLIC_IPV4:-}" python3 - <<'PY'
+import json,os,pathlib
+p=pathlib.Path("/var/lib/omcp/deployment.json")
+try: data=json.loads(p.read_text())
+except Exception: data={}
+data.update({"mode":os.environ["OMCP_MODE"],"panel_host":os.environ.get("OMCP_PANEL_HOST",""),"public_ipv4":os.environ.get("OMCP_PUBLIC_IPV4","")})
+tmp=p.with_suffix(".tmp"); tmp.write_text(json.dumps(data,indent=2)); tmp.replace(p)
+PY
+chown omcp:omcp "$DATA/deployment.json"
+chmod 0640 "$DATA/deployment.json"
 curl -fsSL "$REPO/agent/omcp_agent.py" -o "$APP/omcp_agent.py.new"
 curl -fsSL "$REPO/index.html" -o "$APP/index.html.new"
 install -d -o root -g omcp -m 0750 "$APP/admin"
