@@ -32,7 +32,7 @@ trap cleanup EXIT
 say "Downloading latest OMCP files from GitHub main..."
 download(){
   local path="$1" dest="$2"
-  curl -fL --retry 3 --retry-all-errors --connect-timeout 15 "$REPO/$path" -o "$dest"
+  curl -fL --retry 3 --retry-all-errors --connect-timeout 15 -H "Cache-Control: no-cache" "$REPO/$path?omcp_cachebust=$(date +%s%N)" -o "$dest"
 }
 download "agent/omcp_agent.py" "$WORK/omcp_agent.py"
 download "index.html" "$WORK/index.html"
