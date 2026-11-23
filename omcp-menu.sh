@@ -135,24 +135,42 @@ while True:
 PY
 }
 minecraft_ip(){
-  if ! id omcp >/dev/null 2>&1; then echo "Install OMCP first, then configure the Minecraft domain."; return; fi
-  local domain port
-  read -r -p "Minecraft domain (example: mc.example.com): " domain
-  read -r -p "Minecraft server port [25565]: " port
-  port="${port:-25565}"
-  if [[ ! "$domain" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ || ! "$port" =~ ^[0-9]{1,5}$ ]] || ((port<1 || port>65535)); then echo "Invalid domain or port."; return; fi
-  install -d -m 0750 -o omcp -g omcp /var/lib/omcp
-  DOMAIN="$domain" PORT="$port" python3 - <<'PY'
-import os,json,pathlib
-p=pathlib.Path("/var/lib/omcp/network.json")
-d=json.loads(p.read_text()) if p.exists() else {}
-d["minecraft"]={"domain":os.environ["DOMAIN"],"port":int(os.environ["PORT"])}
-t=p.with_suffix(".tmp"); t.write_text(json.dumps(d,indent=2)); t.replace(p)
+  if ! id omcp >/dev/null 2>&1; then echo "Install OMCP first, then configure the Minecraft host."; return; fi
+  local host public_ip
+  read -r -p "Minecraft domain or VPS public IPv4 (no port): " host
+  host="${host,,}"
+  if [[ -z "$host" || "$host" == *"://"* || "$host" == *"/"* || "$host" == *":"* ]]; then echo "Enter only a domain or IPv4 address. Do not include a port."; return; fi
+  if ! HOST="$host" python3 - <<'PY'
+import ipaddress,os,re,sys
+h=os.environ["HOST"]
+try:
+    ipaddress.IPv4Address(h)
+except ValueError:
+    labels=h.rstrip(".").split(".")
+    if len(labels)<2 or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?",x) for x in labels) or len(labels[-1])<2:
+        sys.exit(1)
 PY
-  chown omcp:omcp /var/lib/omcp/network.json
-  echo "Saved Minecraft endpoint: $domain:$port"
-  echo "DNS reminder: create an A record for $domain pointing to this VPS IPv4."
-  if [[ "$port" != "25565" ]]; then echo "For Java clients, also create an SRV record: _minecraft._tcp.$domain -> target $domain, port $port."; fi
+  then echo "Invalid domain or IPv4 address."; return; fi
+  public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org)" || { echo "Could not detect the VPS public IPv4."; return; }
+  install -d -m 0750 -o omcp -g omcp /var/lib/omcp
+  HOST="$host" PUBLIC_IPV4="$public_ip" python3 - <<'PY'
+import json,os,pathlib
+root=pathlib.Path("/var/lib/omcp")
+p=root/"network.json"
+try: d=json.loads(p.read_text())
+except Exception: d={}
+d["minecraft"]={"host":os.environ["HOST"]}
+t=p.with_suffix(".tmp"); t.write_text(json.dumps(d,indent=2)); t.replace(p)
+dep=root/"deployment.json"
+try: meta=json.loads(dep.read_text())
+except Exception: meta={}
+meta.update({"mode":"ipv4","public_ipv4":os.environ["PUBLIC_IPV4"]})
+t=dep.with_suffix(".tmp"); t.write_text(json.dumps(meta,indent=2)); t.replace(dep)
+PY
+  chown omcp:omcp /var/lib/omcp/network.json /var/lib/omcp/deployment.json
+  echo "Saved Minecraft host: $host"
+  echo "Server port will be selected separately when you create each server."
+  echo "DNS A record must point to VPS IPv4: $public_ip"
 }
 tunnel_menu(){
   while true; do
@@ -209,14 +227,32 @@ server {
     location / {
         proxy_pass http://127.0.0.1:8765;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme;
         proxy_read_timeout 3600s;
     }
 }
 NGINX
+  if [[ "$host" != "$public_ip" ]]; then
+    cat >>/etc/nginx/sites-available/omcp <<NGINX
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $public_ip;
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme;
+        proxy_read_timeout 3600s;
+    }
+}
+NGINX
+  fi
   ln -sfn /etc/nginx/sites-available/omcp /etc/nginx/sites-enabled/omcp
   nginx -t
   systemctl enable --now nginx 2>/dev/null || service nginx start
@@ -228,7 +264,7 @@ NGINX
     panel_url="http://$host"
     echo "WARNING: IP-only access is HTTP. Use a domain to enable trusted HTTPS."
   fi
-  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then ufw allow 80/tcp || true; ufw allow 443/tcp || true; fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then ufw allow 80/tcp || true; ufw allow 443/tcp || true; ufw allow 2022/tcp || true; fi
   printf '%s\n' "$panel_url" >/var/lib/omcp/panel-url
   echo
   echo "=================================================="
@@ -246,7 +282,9 @@ run_install(){
     fi
   fi
   script="$(fetch_script install-omcp.sh)"
-  OMCP_INSTALL_MODE="$mode" OMCP_PANEL_HOST="${host:-}" OMCP_PANEL_EMAIL="${email:-}" bash "$script"
+  public_ip=""
+  if [[ "$mode" == "ipv4" ]]; then public_ip="$(curl -4fsS --max-time 10 https://api.ipify.org)"; fi
+  OMCP_INSTALL_MODE="$mode" OMCP_PANEL_HOST="${host:-}" OMCP_PANEL_EMAIL="${email:-}" OMCP_PUBLIC_IPV4="$public_ip" bash "$script"
   if [[ "$mode" == "ipv4" ]]; then configure_ipv4_proxy "$host" "$email"; fi
 }
 run_uninstall(){
