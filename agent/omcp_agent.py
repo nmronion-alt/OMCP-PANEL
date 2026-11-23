@@ -1472,38 +1472,55 @@ def create_file_archive(sid,rel):
 
 def extract_file_archive(sid, rel):
     folder=safe_dir(sid); archive=server_path(folder,rel)
-    if not archive.is_file() or archive.suffix.lower()!=".zip" or archive.is_symlink():
-        raise ValueError("Select a valid .zip archive")
-    parent=archive.parent
-    temp=parent/(".omcp-extract-"+secrets.token_hex(6))
-    temp.mkdir(mode=0o700)
+    if not archive.is_file() or archive.is_symlink():
+        raise ValueError("Select a ZIP, TAR, TAR.GZ, TGZ, TAR.BZ2 or TAR.XZ archive")
+    name=archive.name.lower()
+    kind="zip" if name.endswith(".zip") else "tar" if name.endswith((".tar",".tar.gz",".tgz",".tar.bz2",".tbz2",".tar.xz",".txz")) else ""
+    if not kind: raise ValueError("Supported formats: ZIP, TAR, TAR.GZ, TGZ, TAR.BZ2 and TAR.XZ")
+    parent=archive.parent; temp=parent/(".omcp-extract-"+secrets.token_hex(6)); temp.mkdir(mode=0o700)
     try:
-        with zipfile.ZipFile(archive,"r") as z:
-            infos=z.infolist()
-            if not infos or len(infos)>100000: raise ValueError("ZIP is empty or contains too many entries")
-            total=0
-            for info in infos:
-                name=info.filename.replace("\\","/")
-                norm=posixpath.normpath(name)
-                mode=(info.external_attr>>16)&0o170000
-                if name.startswith("/") or norm in ("..",".") or norm.startswith("../") or ":" in name.split("/")[0] or mode==stat.S_IFLNK:
-                    raise ValueError("Unsafe path or symbolic link found in ZIP")
-                total+=info.file_size
-                if total>8*1024*1024*1024: raise ValueError("ZIP expands beyond the 8 GB safety limit")
-            z.extractall(temp)
+        if kind=="zip":
+            with zipfile.ZipFile(archive,"r") as z:
+                infos=z.infolist()
+                if not infos or len(infos)>100000: raise ValueError("ZIP is empty or contains too many entries")
+                total=0
+                for info in infos:
+                    raw=info.filename.replace("\\","/"); norm=posixpath.normpath(raw); mode=(info.external_attr>>16)&0o170000
+                    if raw.startswith("/") or norm==".." or norm.startswith("../") or (norm=="." and mode!=stat.S_IFDIR) or ":" in norm.split("/")[0] or mode not in (0,stat.S_IFREG,stat.S_IFDIR): raise ValueError("Unsafe path or special file found in ZIP")
+                    total+=info.file_size
+                    if total>8*1024*1024*1024: raise ValueError("Archive expands beyond the 8 GB safety limit")
+                z.extractall(temp)
+        else:
+            with tarfile.open(archive,"r:*") as t:
+                members=t.getmembers()
+                if not members or len(members)>100000: raise ValueError("TAR is empty or contains too many entries")
+                total=0
+                for m in members:
+                    raw=m.name.replace("\\","/"); norm=posixpath.normpath(raw)
+                    if raw.startswith("/") or norm==".." or norm.startswith("../") or (norm=="." and not m.isdir()) or ":" in norm.split("/")[0] or not (m.isdir() or m.isfile()): raise ValueError("Unsafe path, link or special file found in TAR")
+                    if m.isfile():
+                        total+=m.size
+                        if total>8*1024*1024*1024: raise ValueError("Archive expands beyond the 8 GB safety limit")
+                for m in members:
+                    dest=(temp/posixpath.normpath(m.name)).resolve()
+                    if temp.resolve() not in dest.parents and dest!=temp.resolve(): raise ValueError("Unsafe archive path")
+                    if m.isdir(): dest.mkdir(parents=True,exist_ok=True)
+                    else:
+                        dest.parent.mkdir(parents=True,exist_ok=True); src=t.extractfile(m)
+                        if src is None: raise ValueError("Could not read TAR entry")
+                        with src, dest.open("xb") as out: shutil.copyfileobj(src,out)
         children=list(temp.iterdir())
-        if not children: raise ValueError("ZIP contains no files")
+        if not children: raise ValueError("Archive contains no files")
         for child in children:
             dest=parent/child.name
-            if dest.exists() or dest.is_symlink():
-                raise ValueError("Cannot extract because '"+child.name+"' already exists. Rename or move it first.")
-        for child in children:
-            shutil.move(str(child),str(parent/child.name))
+            if dest.exists() or dest.is_symlink(): raise ValueError("Cannot extract because '"+child.name+"' already exists. Rename or move it first.")
+        for child in children: shutil.move(str(child),str(parent/child.name))
         archive.unlink()
-        return {"extracted":len(children),"items":[p.name for p in children]}
+        return {"extracted":len(children),"items":[p.name for p in children],"format":kind.upper()}
+    except (zipfile.BadZipFile,tarfile.TarError,EOFError) as e:
+        raise ValueError("Archive is damaged or its format does not match the file extension.") from e
     finally:
         shutil.rmtree(temp,ignore_errors=True)
-
 
 def import_world_archive(sid, archive_rel, world_name):
     if server_running(sid): raise ValueError("Stop the server before importing a world.")
