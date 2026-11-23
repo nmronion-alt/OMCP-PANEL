@@ -305,7 +305,7 @@ def reset_sftp_password(sid):
         host=public_ipv4()
         if not host: raise ValueError("Could not detect the VPS public IPv4 for direct SFTP access.")
         return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":SFTP_PORT,"host":host,"tunnelStatus":"direct","fingerprint":SFTP_STATE.get("fingerprint","")}
-    tunnel=start_sftp_pinggy(); return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":tunnel.get("port") or SFTP_PORT,"host":tunnel.get("host") or "Pending","tunnelStatus":tunnel.get("status"),"tunnelLogs":tunnel.get("logs",""),"fingerprint":SFTP_STATE.get("fingerprint","")
+    tunnel=start_sftp_pinggy(); return {"enabled":True,"username":"omcp-"+sid,"password":password,"port":tunnel.get("port") or SFTP_PORT,"host":tunnel.get("host") or "Pending","tunnelStatus":tunnel.get("status"),"tunnelLogs":tunnel.get("logs",""),"fingerprint":SFTP_STATE.get("fingerprint","")}
 
 
 def _mc_varint(n):
