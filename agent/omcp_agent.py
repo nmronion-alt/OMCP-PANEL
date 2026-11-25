@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io, ipaddress
+import base64, json, os, re, secrets, shutil, subprocess, threading, urllib.request, urllib.error, zipfile, time, socket, posixpath, stat, errno, tarfile, platform, struct, hashlib, io, ipaddress, tempfile
 try:
     import paramiko
 except ImportError:
@@ -1318,7 +1318,7 @@ def google_drive_upload(path):
     if uploaded!=size: raise ValueError("Google Drive upload ended early ("+str(uploaded)+"/"+str(size)+" bytes).")
     return {"id":result.get("id",""),"name":result.get("name",p.name),"webViewLink":result.get("webViewLink","")}
 
-def create_live_backup(sid):
+def create_live_backup(sid, display_name=""):
     folder=safe_dir(sid); running=server_running(sid); paused=False
     if running:
         if not send_console_command(sid,"save-off"): raise ValueError("Could not pause world saving for a consistent live backup.")
@@ -1329,12 +1329,14 @@ def create_live_backup(sid):
         except Exception: pass
     try:
         dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
-        zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+        zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+"-"+secrets.token_hex(3)+".zip")
         with zipfile.ZipFile(zpath,"w",zipfile.ZIP_DEFLATED,compresslevel=3) as z:
             for f in folder.rglob("*"):
                 if f.is_file() and not f.is_symlink() and f.name not in ("console.stdin",):
                     z.write(f,f.relative_to(folder))
-        return {"backup":zpath.name,"bytes":zpath.stat().st_size,"path":str(zpath)}
+        meta={"displayName":(display_name.strip()[:80] if display_name else "Backup "+time.strftime("%Y-%m-%d %H:%M:%S")),"serverId":sid,"created":int(time.time())}
+        zpath.with_suffix(".json").write_text(json.dumps(meta),encoding="utf-8")
+        return {"backup":zpath.name,"displayName":meta["displayName"],"bytes":zpath.stat().st_size,"path":str(zpath)}
     finally:
         if paused:
             try: send_console_command(sid,"save-on")
@@ -1359,7 +1361,7 @@ def backup_scheduler_loop():
                 if now-int(item.get("last_run",0))<interval*60: continue
                 if not server_running(sid): continue
                 try:
-                    result=create_live_backup(sid)
+                    result=create_live_backup(sid,str(d.get("name","")))
                     provider=item.get("provider","google_drive")
                     cloud=google_drive_upload(result["path"]) if provider=="google_drive" else {"id":"","name":result["backup"]}
                     prune_uploaded_backups(sid,3 if provider=="google_drive" else 10)
@@ -1715,9 +1717,12 @@ class Handler(BaseHTTPRequestHandler):
                 items=[]
                 for f in sorted(dest.glob("*.zip"),key=lambda p:p.stat().st_mtime,reverse=True):
                     if f.is_file() and not f.is_symlink():
-                        items.append({"name":f.name,"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
+                        try: meta=json.loads(f.with_suffix(".json").read_text()) if f.with_suffix(".json").is_file() else {}
+                        except Exception: meta={}
+                        sid=f.name[:8] if re.match(r"^[a-f0-9]{8}-",f.name) else ""
+                        items.append({"name":f.name,"displayName":meta.get("displayName",f.name),"serverId":meta.get("serverId",sid),"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
                 return send(self,200,{"backups":items})
-            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}\.zip)/download",path)
+            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}\.zip)/download",path)
             if x:
                 f=(ROOT/"backups"/x.group(1)).resolve()
                 if f.parent!=(ROOT/"backups").resolve() or not f.is_file() or f.is_symlink(): raise ValueError("Backup not found")
@@ -2000,6 +2005,50 @@ class Handler(BaseHTTPRequestHandler):
                 if str(meta.get("software","paper")).lower() in ("velocity","waterfall"): raise ValueError("This proxy software does not use the Minecraft server EULA file.")
                 (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).\neula=true\n",encoding="utf-8")
                 return send(self,200,{"accepted":True})
+            bm=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}\.zip)/(rename|restore|delete)",path)
+            if bm:
+                filename,action=bm.groups(); dest=ROOT/"backups"; archive=dest/filename
+                if not archive.is_file() or archive.is_symlink(): raise ValueError("Backup not found")
+                sid=filename[:8]; folder=safe_dir(sid)
+                meta_path=archive.with_suffix(".json")
+                try: meta=json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+                except Exception: meta={}
+                if action=="rename":
+                    name=str(d.get("name","")).strip()
+                    if not name or len(name)>80 or any(ord(c)<32 for c in name): raise ValueError("Backup name must be 1-80 characters")
+                    meta.update({"displayName":name,"serverId":sid})
+                    meta_path.write_text(json.dumps(meta),encoding="utf-8")
+                    return send(self,200,{"renamed":True,"displayName":name})
+                if action=="delete":
+                    archive.unlink()
+                    if meta_path.exists(): meta_path.unlink()
+                    return send(self,200,{"deleted":True})
+                if server_running(sid): raise ValueError("Stop the server before restoring this backup.")
+                safety=create_live_backup(sid,"Safety backup before restore")
+                temp=Path(tempfile.mkdtemp(prefix="omcp-restore-"))
+                try:
+                    with zipfile.ZipFile(archive,"r") as z:
+                        bad=z.testzip()
+                        if bad: raise ValueError("Backup archive is corrupted: "+bad)
+                        root=temp.resolve()
+                        for info in z.infolist():
+                            target=(temp/info.filename).resolve()
+                            if target!=root and root not in target.parents: raise ValueError("Unsafe path in backup archive")
+                            mode=(info.external_attr>>16)&0o170000
+                            if mode==stat.S_IFLNK: raise ValueError("Backup contains an unsafe symbolic link")
+                        z.extractall(temp)
+                    for child in folder.iterdir():
+                        if child.name in ("omcp.json","console.stdin"): continue
+                        if child.is_dir() and not child.is_symlink(): shutil.rmtree(child)
+                        elif child.is_file() and not child.is_symlink(): child.unlink()
+                    for child in temp.iterdir():
+                        target=folder/child.name
+                        if target.exists():
+                            if target.is_dir(): shutil.rmtree(target)
+                            else: target.unlink()
+                        shutil.move(str(child),str(target))
+                finally: shutil.rmtree(temp,ignore_errors=True)
+                return send(self,200,{"restored":True,"safetyBackup":safety["backup"]})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
                 sid,act=x.groups()
