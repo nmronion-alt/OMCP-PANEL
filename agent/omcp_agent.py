@@ -1722,7 +1722,7 @@ class Handler(BaseHTTPRequestHandler):
                         sid=f.name[:8] if re.match(r"^[a-f0-9]{8}-",f.name) else ""
                         items.append({"name":f.name,"displayName":meta.get("displayName",f.name),"serverId":meta.get("serverId",sid),"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
                 return send(self,200,{"backups":items})
-            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}\.zip)/download",path)
+            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}(?:-[a-f0-9]{6})?\.zip)/download",path)
             if x:
                 f=(ROOT/"backups"/x.group(1)).resolve()
                 if f.parent!=(ROOT/"backups").resolve() or not f.is_file() or f.is_symlink(): raise ValueError("Backup not found")
@@ -2005,7 +2005,7 @@ class Handler(BaseHTTPRequestHandler):
                 if str(meta.get("software","paper")).lower() in ("velocity","waterfall"): raise ValueError("This proxy software does not use the Minecraft server EULA file.")
                 (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).\neula=true\n",encoding="utf-8")
                 return send(self,200,{"accepted":True})
-            bm=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}\.zip)/(rename|restore|delete)",path)
+            bm=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}(?:-[a-f0-9]{6})?\.zip)/(rename|restore|delete)",path)
             if bm:
                 filename,action=bm.groups(); dest=ROOT/"backups"; archive=dest/filename
                 if not archive.is_file() or archive.is_symlink(): raise ValueError("Backup not found")
@@ -2062,7 +2062,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not send_console_command(sid,cmd): raise ValueError("Console input is unavailable. Restart this server once to enable persistent console commands.")
                     result={"sent":True}
                 else:
-                    result=create_live_backup(sid)
+                    result=create_live_backup(sid,str(d.get("name","")))
                     result.pop("path",None)
                 return send(self,200,result)
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/rename",path)
