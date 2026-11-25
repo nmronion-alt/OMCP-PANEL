@@ -2005,6 +2005,50 @@ class Handler(BaseHTTPRequestHandler):
                 if str(meta.get("software","paper")).lower() in ("velocity","waterfall"): raise ValueError("This proxy software does not use the Minecraft server EULA file.")
                 (folder/"eula.txt").write_text("# By changing the setting below to TRUE you are indicating your agreement to the Minecraft EULA (https://www.minecraft.net/eula).\neula=true\n",encoding="utf-8")
                 return send(self,200,{"accepted":True})
+            bm=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}\.zip)/(rename|restore|delete)",path)
+            if bm:
+                filename,action=bm.groups(); dest=ROOT/"backups"; archive=dest/filename
+                if not archive.is_file() or archive.is_symlink(): raise ValueError("Backup not found")
+                sid=filename[:8]; folder=safe_dir(sid)
+                meta_path=archive.with_suffix(".json")
+                try: meta=json.loads(meta_path.read_text()) if meta_path.is_file() else {}
+                except Exception: meta={}
+                if action=="rename":
+                    name=str(d.get("name","")).strip()
+                    if not name or len(name)>80 or any(ord(c)<32 for c in name): raise ValueError("Backup name must be 1-80 characters")
+                    meta.update({"displayName":name,"serverId":sid})
+                    meta_path.write_text(json.dumps(meta),encoding="utf-8")
+                    return send(self,200,{"renamed":True,"displayName":name})
+                if action=="delete":
+                    archive.unlink()
+                    if meta_path.exists(): meta_path.unlink()
+                    return send(self,200,{"deleted":True})
+                if server_running(sid): raise ValueError("Stop the server before restoring this backup.")
+                safety=create_live_backup(sid,"Safety backup before restore")
+                temp=Path(tempfile.mkdtemp(prefix="omcp-restore-"))
+                try:
+                    with zipfile.ZipFile(archive,"r") as z:
+                        bad=z.testzip()
+                        if bad: raise ValueError("Backup archive is corrupted: "+bad)
+                        root=temp.resolve()
+                        for info in z.infolist():
+                            target=(temp/info.filename).resolve()
+                            if target!=root and root not in target.parents: raise ValueError("Unsafe path in backup archive")
+                            mode=(info.external_attr>>16)&0o170000
+                            if mode==stat.S_IFLNK: raise ValueError("Backup contains an unsafe symbolic link")
+                        z.extractall(temp)
+                    for child in folder.iterdir():
+                        if child.name in ("omcp.json","console.stdin"): continue
+                        if child.is_dir() and not child.is_symlink(): shutil.rmtree(child)
+                        elif child.is_file() and not child.is_symlink(): child.unlink()
+                    for child in temp.iterdir():
+                        target=folder/child.name
+                        if target.exists():
+                            if target.is_dir(): shutil.rmtree(target)
+                            else: target.unlink()
+                        shutil.move(str(child),str(target))
+                finally: shutil.rmtree(temp,ignore_errors=True)
+                return send(self,200,{"restored":True,"safetyBackup":safety["backup"]})
             x=re.fullmatch(r"/api/servers/([a-f0-9]{8})/(start|stop|restart|command|backup)",path)
             if x:
                 sid,act=x.groups()
