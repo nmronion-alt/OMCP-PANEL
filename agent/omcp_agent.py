@@ -1318,7 +1318,7 @@ def google_drive_upload(path):
     if uploaded!=size: raise ValueError("Google Drive upload ended early ("+str(uploaded)+"/"+str(size)+" bytes).")
     return {"id":result.get("id",""),"name":result.get("name",p.name),"webViewLink":result.get("webViewLink","")}
 
-def create_live_backup(sid):
+def create_live_backup(sid, display_name=""):
     folder=safe_dir(sid); running=server_running(sid); paused=False
     if running:
         if not send_console_command(sid,"save-off"): raise ValueError("Could not pause world saving for a consistent live backup.")
@@ -1329,12 +1329,14 @@ def create_live_backup(sid):
         except Exception: pass
     try:
         dest=ROOT/"backups"; dest.mkdir(exist_ok=True)
-        zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+".zip")
+        zpath=dest/(sid+"-"+time.strftime("%Y%m%d-%H%M%S")+"-"+secrets.token_hex(3)+".zip")
         with zipfile.ZipFile(zpath,"w",zipfile.ZIP_DEFLATED,compresslevel=3) as z:
             for f in folder.rglob("*"):
                 if f.is_file() and not f.is_symlink() and f.name not in ("console.stdin",):
                     z.write(f,f.relative_to(folder))
-        return {"backup":zpath.name,"bytes":zpath.stat().st_size,"path":str(zpath)}
+        meta={"displayName":(display_name.strip()[:80] if display_name else "Backup "+time.strftime("%Y-%m-%d %H:%M:%S")),"serverId":sid,"created":int(time.time())}
+        zpath.with_suffix(".json").write_text(json.dumps(meta),encoding="utf-8")
+        return {"backup":zpath.name,"displayName":meta["displayName"],"bytes":zpath.stat().st_size,"path":str(zpath)}
     finally:
         if paused:
             try: send_console_command(sid,"save-on")
@@ -1359,7 +1361,7 @@ def backup_scheduler_loop():
                 if now-int(item.get("last_run",0))<interval*60: continue
                 if not server_running(sid): continue
                 try:
-                    result=create_live_backup(sid)
+                    result=create_live_backup(sid,str(d.get("name","")))
                     provider=item.get("provider","google_drive")
                     cloud=google_drive_upload(result["path"]) if provider=="google_drive" else {"id":"","name":result["backup"]}
                     prune_uploaded_backups(sid,3 if provider=="google_drive" else 10)
@@ -1715,7 +1717,10 @@ class Handler(BaseHTTPRequestHandler):
                 items=[]
                 for f in sorted(dest.glob("*.zip"),key=lambda p:p.stat().st_mtime,reverse=True):
                     if f.is_file() and not f.is_symlink():
-                        items.append({"name":f.name,"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
+                        try: meta=json.loads(f.with_suffix(".json").read_text()) if f.with_suffix(".json").is_file() else {}
+                        except Exception: meta={}
+                        sid=f.name[:8] if re.match(r"^[a-f0-9]{8}-",f.name) else ""
+                        items.append({"name":f.name,"displayName":meta.get("displayName",f.name),"serverId":meta.get("serverId",sid),"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
                 return send(self,200,{"backups":items})
             x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}\.zip)/download",path)
             if x:
