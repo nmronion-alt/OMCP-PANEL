@@ -1722,7 +1722,7 @@ class Handler(BaseHTTPRequestHandler):
                         sid=f.name[:8] if re.match(r"^[a-f0-9]{8}-",f.name) else ""
                         items.append({"name":f.name,"displayName":meta.get("displayName",f.name),"serverId":meta.get("serverId",sid),"bytes":f.stat().st_size,"created":int(f.stat().st_mtime)})
                 return send(self,200,{"backups":items})
-            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}\.zip)/download",path)
+            x=re.fullmatch(r"/api/backups/([a-f0-9]{8}-[0-9]{8}-[0-9]{6}-[a-f0-9]{6}\.zip)/download",path)
             if x:
                 f=(ROOT/"backups"/x.group(1)).resolve()
                 if f.parent!=(ROOT/"backups").resolve() or not f.is_file() or f.is_symlink(): raise ValueError("Backup not found")
